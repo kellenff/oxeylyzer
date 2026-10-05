@@ -7,3 +7,8 @@ feature.json
 
 # Per-machine extension config overrides.
 extensions/*/local-config.yml
+
+# Installer state: the downloaded extension catalog and the registry
+# recording which commands each host registered. Regenerated on install.
+extensions/.cache/
+extensions/.registry
