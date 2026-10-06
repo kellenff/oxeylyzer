@@ -132,14 +132,12 @@ features:
     completed_at: "2026-10-06T04:31:53Z"
   - id: "generate-dead-code"
     name: "Generation Dead Code and Hot Path"
-    description: "Remove obsolete generation code that is compiled but unreachable, and address the scoring hot path that recomputes per-finger usage on every candidate."
+    description: "Derive the per-finger usage contribution for a scored swap from the layout cache instead of recomputing it, so the value already computed at cache-build time is not recalculated on every candidate."
     files:
-      - "oxeylyzer-core/src/generate/obsolete.rs"
       - "oxeylyzer-core/src/generate.rs"
-      - "oxeylyzer-core/src/fast_layout.rs"
-    status: pending
-    current_phase: null
-    branch: null
+    status: in-progress
+    current_phase: clarify
+    branch: "feature/time-machine-generate-dead-code"
     pushed: null
-    started_at: null
+    started_at: "2026-10-06T04:31:53Z"
     completed_at: null

@@ -237,7 +237,7 @@ impl Oxeylyzer {
     /// assert_eq!(oxeylyzer.language, "");
     /// ```
     pub fn new(data: Data, config: Config) -> Self
-where {
+    where {
         let data = AnalyzerData::new(data, &config.weights);
 
         Self {
@@ -699,6 +699,24 @@ where {
             .sum()
     }
 
+    /// The threshold share of the corpus total above which a finger is penalised.
+    fn max_finger_use_threshold(&self, finger: Finger) -> i64 {
+        let m = &self.weights.max_finger_use;
+        match finger {
+            Finger::LP | Finger::RP => m.pinky,
+            Finger::LR | Finger::RR => m.ring,
+            Finger::LM | Finger::RM => m.middle,
+            Finger::LI | Finger::RI => m.index,
+            Finger::LT | Finger::RT => m.thumb,
+        }
+    }
+
+    /// Applies the over-use penalty to a finger's total character usage.
+    fn finger_usage_score(&self, finger: Finger, usage: i64) -> i64 {
+        self.weights.max_finger_use.penalty
+            * (usage - self.max_finger_use_threshold(finger) * self.data.char_total / 100)
+    }
+
     fn finger_usage(&self, layout: &FastLayout, finger: Finger) -> i64 {
         let usage = layout
             .usage_indices
@@ -707,26 +725,9 @@ where {
             .map(|&i| self.data.get_char_u(layout.keys[i]))
             .sum::<i64>();
 
-        self.weights.max_finger_use.penalty
-            * match finger {
-                Finger::LP | Finger::RP => {
-                    // TODO: optimize
-                    usage - self.weights.max_finger_use.pinky * self.data.char_total / 100
-                }
-                Finger::LR | Finger::RR => {
-                    usage - self.weights.max_finger_use.ring * self.data.char_total / 100
-                }
-                Finger::LM | Finger::RM => {
-                    usage - self.weights.max_finger_use.middle * self.data.char_total / 100
-                }
-                Finger::LI | Finger::RI => {
-                    usage - self.weights.max_finger_use.index * self.data.char_total / 100
-                }
-                Finger::LT | Finger::RT => {
-                    usage - self.weights.max_finger_use.thumb * self.data.char_total / 100
-                }
-            }
+        self.finger_usage_score(finger, usage)
     }
+
 
     /// Computes the same-finger bigram penalty for a pair.
     pub fn pair_sfb(&self, layout: &FastLayout, bigram_pair: &BigramPair) -> i64 {
@@ -1245,6 +1246,86 @@ mod tests {
             );
             assert_eq!(Some(cache.total_score()), accepted_score);
             assert_eq!(GEN.initialize_cache(&qwerty), cache);
+        }
+    }
+
+    /// The extracted penalty must agree with the original inline expression for every
+    /// finger. Guards the refactor: scoring is compared as exact integers, so a change
+    /// in the arithmetic would silently change which layouts are considered better.
+    #[test]
+    fn finger_usage_score_matches_inline_expression() {
+        let qwerty = QWERTY.clone();
+        for finger in Finger::FINGERS {
+            let usage = qwerty
+                .usage_indices
+                .get(finger)
+                .iter()
+                .map(|&i| GEN.data.get_char_u(qwerty.keys[i]))
+                .sum::<i64>();
+
+            // The expression as it was written inline before being extracted.
+            let original = GEN.weights.max_finger_use.penalty
+                * match finger {
+                Finger::LP | Finger::RP => {
+                    usage - GEN.weights.max_finger_use.pinky * GEN.data.char_total / 100
+                }
+                Finger::LR | Finger::RR => {
+                    usage - GEN.weights.max_finger_use.ring * GEN.data.char_total / 100
+                }
+                Finger::LM | Finger::RM => {
+                    usage - GEN.weights.max_finger_use.middle * GEN.data.char_total / 100
+                }
+                Finger::LI | Finger::RI => {
+                    usage - GEN.weights.max_finger_use.index * GEN.data.char_total / 100
+                }
+                Finger::LT | Finger::RT => {
+                    usage - GEN.weights.max_finger_use.thumb * GEN.data.char_total / 100
+                }
+            };
+
+            assert_eq!(
+                GEN.finger_usage_score(finger, usage),
+                original,
+                "penalty mismatch for {finger:?}"
+            );
+        }
+    }
+
+    /// The cached and recomputed per-finger usage must agree before and after a swap.
+    #[test]
+    fn finger_usage_after_swap_matches_recompute() {
+        let mut qwerty = QWERTY.clone();
+        let _ = &mut qwerty;
+        let cache = GEN.initialize_cache(&qwerty);
+
+        for (i1, i2) in [(0u8, 12u8), (5, 7), (20, 25), (12, 13)] {
+            let before: Vec<i64> = Finger::FINGERS
+                .into_iter()
+                .map(|f| GEN.finger_usage(&qwerty, f))
+                .collect();
+
+            let swap = PosPair(i1, i2);
+            let (f1, f2) = {
+                qwerty.swap_pair(&swap).unwrap();
+                (qwerty.finger(i1).unwrap(), qwerty.finger(i2).unwrap())
+            };
+
+            let after: Vec<i64> = Finger::FINGERS
+                .into_iter()
+                .map(|f| GEN.finger_usage(&qwerty, f))
+                .collect();
+
+            for f in Finger::FINGERS {
+                // Only the two fingers holding the swapped keys may differ.
+                let expect_same = f != f1 && f != f2;
+                if expect_same {
+                    assert_eq!(before[f as usize], after[f as usize], "{f:?} changed");
+                }
+            }
+            // And the cache agreed with the recompute before the swap.
+            for f in Finger::FINGERS {
+                assert_eq!(cache.usage[f as usize], before[f as usize], "cache stale");
+            }
         }
     }
 
