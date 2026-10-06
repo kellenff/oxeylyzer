@@ -34,9 +34,12 @@ pub struct OxeylyzerDirs {
 /// explain the difference rather than only reporting a yes/no.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataCurrency {
-    /// No version recorded — either a fresh installation or an unreadable sentinel.
+    /// No version recorded — either a fresh installation, or a sentinel that cannot
+    /// be read, or one that is empty. A sentinel that reads back but is not a version
+    /// lands in [`DataCurrency::Stale`] instead.
     Absent,
-    /// A version is recorded and it is older than the current one.
+    /// A version is recorded but is not the one this build expects: either older than
+    /// the current one, or not parseable as a dot-separated version at all.
     Stale { installed: String },
     /// A version is recorded and it matches or exceeds the current one.
     ///
