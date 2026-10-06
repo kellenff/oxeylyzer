@@ -65,7 +65,7 @@ A sentinel that reads back but does not parse returns its string and lands in
 `Stale`: a pre-release suffix, a `v` prefix, or a negative component fails
 `compare_versions`, and the caller maps `None` to `Stale` (S005).
 
-> ⚠ conflict: `specs/002-data-version-upgrade/tasks.md` T010 says unparseable
+> ✔ resolved: `specs/002-data-version-upgrade/tasks.md` T010 says unparseable
 > versions "map to `Absent`" (S004). Shipped code maps them to
 > `Stale { installed: "not-a-version" }` (S005). Resolved in the code, not in the
 > artifact: T010 is not editable, so its wording stays wrong in history.

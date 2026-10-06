@@ -21,10 +21,12 @@ arm was damaged twice and had to be restored from HEAD, once by region
 extraction and reinsertion and once line-wise (S007, S008). The churn itself is
 not the expensive part; recovering the mangled function is.
 
-> ⚠ conflict: the two accounts disagree about what damaged the match arm.
+> ✔ resolved: the two accounts disagree about what damaged the match arm.
 > `specs/005-tauri-startup-graceful/tasks.md` says the **blanket string replace**
 > used to undo the churn corrupted it (S007). `specs/006-edit-view-rename-delete/tasks.md`
-> says the **JetBrains action itself** mangled it, both times (S008).
+> says the **JetBrains action itself** mangled it, both times (S008). Settled as
+> immaterial: the procedure is identical either way, so the disagreement changes nothing
+> about what to do. Kept visible because both accounts are immutable artifacts.
 
 The procedure covers either cause, which is why it does not have to pick: run
 the formatter, then read the diff's hunk list before committing, and never undo
