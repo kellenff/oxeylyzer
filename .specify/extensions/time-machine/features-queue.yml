@@ -1,7 +1,7 @@
 analyzed_at: "2026-10-05T23:47:00Z"
 project_root: "/Users/kellen/Projects/oxeylyzer"
 total_features: 9
-completed: 3
+completed: 4
 features:
   - id: "archive-safety"
     name: "Safe Data Archive Extraction"
@@ -100,12 +100,12 @@ features:
     description: "Report directory resolution, download, and config load failures as actionable startup errors instead of panicking, so the app can explain what went wrong."
     files:
       - "oxeylyzer-tauri/src-tauri/src/lib.rs"
-    status: in-progress
-    current_phase: implement
+    status: done
+    current_phase: null
     branch: "feature/time-machine-tauri-startup-graceful"
-    pushed: null
+    pushed: false
     started_at: "2026-10-06T01:02:27Z"
-    completed_at: null
+    completed_at: "2026-10-06T01:33:47Z"
   - id: "edit-view-rename-delete"
     name: "Layout Rename Consistency"
     description: "Make editing a layout's name leave no orphaned file on disk, and remove the assumption that boards are always a five-plus-five row split."
