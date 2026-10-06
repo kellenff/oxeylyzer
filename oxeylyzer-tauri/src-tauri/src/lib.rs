@@ -9,7 +9,7 @@ use std::{
 
 use oxeylyzer_core::{
     data::Data,
-    fast_layout::{BigramPair, FastLayout},
+    fast_layout::{BigramPair, FastLayout, auto_name},
     generate::{LayoutStats, Oxeylyzer},
     layout::{Layout, LayoutMetadata},
     rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
@@ -1057,14 +1057,7 @@ fn save_generated(
         .ok_or_else(|| format!("Index {index} out of bounds ({len} results)"))?;
 
     // Assign the chosen name.
-    let save_name = name.unwrap_or_else(|| {
-        fl.keys
-            .iter()
-            .skip(10)
-            .take(4)
-            .map(|&u| engine.mapping.get_c(u))
-            .collect::<String>()
-    });
+    let save_name = name.unwrap_or_else(|| auto_name(&fl.keys, &fl.shape, &engine.mapping));
     fl.name = Some(save_name.clone());
 
     // Serialize to .dof JSON, clearing provenance fields from the base layout.

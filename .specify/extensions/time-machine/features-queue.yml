@@ -124,11 +124,11 @@ features:
     files:
       - "oxeylyzer-core/src/layout.rs"
       - "oxeylyzer-core/src/fast_layout.rs"
-    status: pending
-    current_phase: null
-    branch: null
+    status: in-progress
+    current_phase: implement
+    branch: "feature/time-machine-layout-auto-naming"
     pushed: null
-    started_at: null
+    started_at: "2026-10-06T01:59:22Z"
     completed_at: null
   - id: "generate-dead-code"
     name: "Generation Dead Code and Hot Path"
