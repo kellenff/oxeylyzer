@@ -21,11 +21,11 @@ features:
       - "oxeylyzer-resources/src/seed.rs"
       - "oxeylyzer-resources/src/download.rs"
       - "oxeylyzer-resources/src/dirs.rs"
-    status: pending
-    current_phase: null
-    branch: null
+    status: in-progress
+    current_phase: implement
+    branch: "feature/time-machine-data-version-upgrade"
     pushed: null
-    started_at: null
+    started_at: "2026-10-06T00:07:33Z"
     completed_at: null
   - id: "resources-test-coverage"
     name: "Resource Crate Test Coverage"

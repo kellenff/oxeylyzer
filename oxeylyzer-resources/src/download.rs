@@ -8,9 +8,15 @@ const DATA_URL: &str = "https://github.com/o-x-e-y/oxeylyzer/archive/refs/heads/
 // GitHub archive zip puts all files under a root folder named "{repo}-{branch}/"
 const ZIP_INNER_PREFIX: &str = "oxeylyzer-data-files/";
 
-/// Written to the data root once extraction succeeds, so a failed or partial
-/// extraction is never mistaken for a complete install.
-const DATA_VERSION: &str = "1.0.0";
+/// Name of the sentinel file in the data root recording the installed data version.
+pub const DATA_VERSION_FILE: &str = ".data-version";
+
+/// Data files version this build expects.
+///
+/// Bumped by hand when the published data release changes. Deliberately not
+/// derived from the crate version: a bugfix release must not re-download every
+/// user's data files.
+pub const DATA_VERSION: &str = "1.0.0";
 
 pub enum DownloadProgress {
     Connecting,
@@ -107,7 +113,7 @@ fn extract_bytes(body: &[u8], dest: &Path) -> Result<(), ResourceError> {
         }
     }
 
-    std::fs::write(dest.join(".data-version"), DATA_VERSION)?;
+    std::fs::write(dest.join(DATA_VERSION_FILE), DATA_VERSION)?;
 
     Ok(())
 }
