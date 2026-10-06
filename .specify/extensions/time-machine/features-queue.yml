@@ -45,12 +45,27 @@ features:
     description: "Serialize the Multiple character-mapping struct instead of panicking, so corpus configurations round-trip rather than hitting an unimplemented path."
     files:
       - "oxeylyzer-repl/src/corpus_transposition.rs"
-    status: pending
+    status: skipped
     current_phase: null
-    branch: null
+    branch: "feature/time-machine-corpus-config-serialization"
     pushed: null
-    started_at: null
-    completed_at: null
+    started_at: "2026-10-06T00:51:49Z"
+    completed_at: "2026-10-06T00:51:49Z"
+    # Skipped 2026-10-06. Not a defect. `CorpusConfig` derives Deserialize only --
+    # nothing in the chain derives Serialize -- so the `unimplemented!()` at
+    # corpus_transposition.rs:25 sits in the write direction of a read-only
+    # converter and cannot execute. The `multiple` field is typed
+    # Vec<(char, String)>, not `Multiple`; that struct exists only to feed the
+    # reader. Every call site is toml::from_str. Nothing writes corpus configs.
+    # Reading is load-bearing: 14 published corpus configs use this mapping table,
+    # including czech/french/esperanto with uppercase_versions = true.
+    #
+    # Reconsider if a "save corpus config" feature is ever wanted. The honest fix
+    # then is a real Serialize impl plus dropping Serialize from the read-only
+    # sub-types (OneToOne, ShiftKey) so unsupported writes fail at compile time
+    # rather than panicking at runtime. See specs/004-corpus-config-serialization/
+    # for the full spec, written before the skip decision.
+
   - id: "dead-key-mapping"
     name: "Dead Key and Shift Mapping"
     description: "Map dead keys, custom shift, and repeat characters when cleaning corpora so languages with diacritics and layered layouts produce accurate character counts."
