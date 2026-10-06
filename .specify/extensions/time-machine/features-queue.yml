@@ -1,7 +1,7 @@
 analyzed_at: "2026-10-05T23:47:00Z"
 project_root: "/Users/kellen/Projects/oxeylyzer"
 total_features: 9
-completed: 5
+completed: 6
 features:
   - id: "archive-safety"
     name: "Safe Data Archive Extraction"
@@ -124,12 +124,12 @@ features:
     files:
       - "oxeylyzer-core/src/layout.rs"
       - "oxeylyzer-core/src/fast_layout.rs"
-    status: in-progress
-    current_phase: implement
+    status: done
+    current_phase: null
     branch: "feature/time-machine-layout-auto-naming"
-    pushed: null
+    pushed: false
     started_at: "2026-10-06T01:59:22Z"
-    completed_at: null
+    completed_at: "2026-10-06T04:31:53Z"
   - id: "generate-dead-code"
     name: "Generation Dead Code and Hot Path"
     description: "Remove obsolete generation code that is compiled but unreachable, and address the scoring hot path that recomputes per-finger usage on every candidate."
