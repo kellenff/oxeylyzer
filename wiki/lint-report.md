@@ -1,59 +1,32 @@
 # Wiki Lint Report — 2026-10-06
 
-Remediation pass over the previous lint report. Config: `lint.stale_after_days: 90`,
-`lint.auto_fix: index-and-links`, `ingest.require_citations: true`. 22 pages, 9 sources.
+Full pass, re-run after fixing finding 1. 28 pages, 11 registered sources, cutoff `updated < 2026-07-08`.
 
-**Remediation surfaced a real defect in shipped code.** Finding 2 below was written as a
-question about a test; verifying it required tracing where `Shape` actually comes from,
-and the answer is that the naming rule is fed the wrong shape. SC-002 is violated. This is
-a code bug, not a wiki problem — the wiki now records it accurately.
+| # | Check | Severity | Page | Finding | Suggested fix |
+|---|-------|----------|------|---------|---------------|
+| 1 | contradictions | semantic | scoring-cache-and-layout-cache.md | Open `⚠ conflict:` from S010's ingest. T005/SC-006 claim the misleading `TODO: optimize` was replaced by documenting where the scoring cost actually sits. The marker is gone (`410324f`), but no replacement comment exists at the cost site — `score_swap_cached`'s doc comment still reads only "Scores a potential key swap using the cache", and the redundant recompute at the `usage_score` binding is uncommented. Cost is documented in spec and plan, not code | User decision: add the comment the requirement asked for, then resolve the marker. Or amend T005/SC-006 to say the documentation lives in the spec, not the source |
+| 2 | contradictions | semantic | exact-integer-scoring-is-an-invariant.md | Internal mismatch: line 17 reads "Three requirements exist only to hold this line" but the table immediately below has **four** rows — FR-001, FR-008, SC-001, SC-005. Two are requirements and two are success criteria, so the count is wrong twice over | Change "Three requirements" to "Four requirements and success criteria". Written by this session's ingest; not auto-fixed because it is prose |
+| 3 | citations | semantic | why-coverage-is-scoped-by-measurement.md | The "What was already protected when the work started" table (lines 24-30) lists five behaviors mapped to source files and carries no citation on the heading, the table, or any row. It asserts which behaviors were already covered | Add (S006) to the section heading or the first row. Pre-existing from S006's ingest, never caught because earlier lint passes flagged only newly-added blocks |
+| 4 | citations | semantic | swap-moves-two-characters.md | The delta formula block (lines 12-17) and its lead-in "That makes each affected finger's post-swap usage derivable from its cached value in O(1):" carry no citation; the sentence after the block ends with (S010) and the preceding paragraph also ends with (S010), so the claim is sourced but the block itself is ambiguous | Add (S010) to the lead-in sentence so the formula reads as sourced without reading past it. Marginal — flagging for consistency with row 5 |
+| 5 | citations | semantic | scoring-cache-and-layout-cache.md | The five-step numbered list (lines 22-32) describing `score_swap_cached` has no citation on the steps; the lead-in paragraph ends with (S011) | Add (S011) to step 3, which is the only step making a claim about current code behavior rather than restating the lead-in. Marginal |
+| 6 | citations | semantic | exact-integer-scoring-is-an-invariant.md | The requirements table (lines 19-24) carries no per-row citation; the lead-in ends with (S010) | None required — the lead-in scopes the whole table. Listed for consistency with row 3, which has no scoped lead-in |
 
-| # | Check | Severity | Page | Finding | Status |
-|---|-------|----------|------|---------|--------|
-| 1 | contradictions | semantic | layout-row-separator-convention.md | S008 vs S009 on the shipped layout census. S009 claimed all 815 are 3×10. | **Resolved.** Re-enumerated from the published `data-files.zip` — 815 `.dof` files, all parsed, 0 unparsed. 809 `[10,10,10]`, 5 `[10,11,10]`, 1 `[10,10,10,2]`. S008 was right, S009 wrong. Also corrected S008: the odd layout is `[10,10,10,2]`, not four rows of ten (`shai/dusk.dof`). Method recorded on the page |
-| 2 | contradictions | semantic | auto-layout-naming.md | The four-row board rationale did not reproduce; `skip(10)` starts row 1, not row 0, so the test passes against pre-change code. | **Resolved** — and it led to finding 3 |
-| 3 | — | semantic | auto-layout-naming.md | **New, not previously known.** `auto_name` takes `skip` from `board.shape()` — the form factor's fingering table, not the layout's rows. `ansi` declares a 14-key first row for layouts whose first row is 10 keys, so 4 shipped `ansi` layouts get different names: `english/halmak` `shnt`→`,.ae`, `shai/gust` `eiac`→`ydht`, `shai/stand` `stnd`→`yxra`, `shai/stronk` `strn`→`kyma`. **SC-002 violated** — it required all 815 names unchanged. Verified by running the real `libdof` parse path | New page [Layout Shape Is The Board's Shape](./pages/layout-shape-is-the-boards-shape.md). Code fix not attempted — see "Next step" |
-| 4 | contradictions | semantic | formatting-rust-without-cargo-fmt.md | Two accounts of what damaged `generate_batch`'s match arm. | **Resolved** — immaterial; the procedure is identical either way. Marker flipped to `✔ resolved:`, both claims kept |
-| 5 | contradictions | semantic | data-version-currency.md | Marker open though the prose already settled it: T010 says `Absent`, shipped code says `Stale`. | **Resolved** — settled by S005's shipped behavior. Marker flipped, both claims kept |
-| 6 | stale | semantic | sources.md | `dirs.rs` changed in `10ad47f` after S005's ingest row was written. | **Not a real finding.** `Last ingested` is already 2026-10-06, the same date the pages were updated in that same commit — there is no date to bump. Page content already matches current code (line 81 documents the corrected rustdoc). An attempt to annotate the date inline was reverted: prose in a date column breaks the staleness parse |
-| 7 | citations | semantic | auto-layout-naming.md | 3 uncited blocks. | **Fixed** — measured blocks now carry (S009) |
-| 8 | citations | semantic | layout-shape-is-the-boards-shape.md | Measurement blocks uncited. | **Fixed** |
-| 9 | citations | semantic | why-one-shared-naming-rule.md | `**Rejected alternatives:**` table header uncited. | **Fixed** — header now reads "all from S009" |
-| 10 | citations | semantic | layout-row-separator-convention.md | New census block uncited. | **Fixed** |
+## Closed since the first pass
 
-## Checks clean
+The previous report's finding 1 is **resolved**. `best_found_swap` asserted the chosen swaps match only *when the two scores were already equal*, and on a score mismatch printed `"scores not the same"` and passed; `score_swaps_no_accept` tolerated `SMALLEST_SCORE + 1000`, i.e. `i64::MIN + 1000`, a value `score_with_precision` cannot return short of overflow. Both are fixed in `oxeylyzer-core/src/generate.rs`: the nested `if let`s are removed so neither `None` outcome skips silently, the scores are asserted before the swaps, and the unreachable sentinel is gone.
 
-`index-drift` — 22 pages, all in `INDEX.md`; every target exists; no duplicates. Two
-component lines rewritten to describe the pages as they now stand.
+Both tests passed unchanged against current code, so the fix cost no score — it removed the ability to hide one. 214 tests pass, clippy clean, `cargo bench --no-run` compiles. The marker on `why-obsolete-rs-stays.md` is now `✔ resolved:`, keeping both the original claim and what the code actually did visible.
 
-`links` — 0 dead relative links; every `(Snnn)` resolves to S001–S009.
+## Mechanical checks
 
-`orphans` — 0. Inbound 2–12. The new page is linked from `auto-layout-naming.md`.
+No mechanical findings. `auto_fix: index-and-links` had nothing to do:
 
-`citations` — 0 uncited claims remain. The 25 blocks a naive scan flags are all
-`Related:` link footers and tables, which assert nothing.
+- **index-drift** — clean. 28 pages, 28 index lines, no line pointing at a missing file.
+- **links** — clean. No dead relative links; every `S0nn` cited across all pages is registered in `sources.md`, and no registered source is uncited.
+- **orphans** — clean. Every page is linked from at least one other page; minimum inbound count is 2 (`layout-shape-is-the-boards-shape.md`, `shipped-data-files-layout.md`, `why-one-shared-naming-rule.md`).
+- **stale** — clean. All 28 pages `updated: 2026-10-06`; all 11 sources `Last ingested 2026-10-06`. No page predates its source's re-ingest.
+- Frontmatter — all 28 pages carry `title`, `type`, `sources`, `updated`. Types match SCHEMA.md's table; no type outside `concept`, `decision`, `component`, `reference`, `howto`.
+- Word cap — no page exceeds `ingest.page_max_words` (600). Largest is `formatting-rust-without-cargo-fmt.md` at ~422.
+- Conformance — 7 `✔ resolved:` markers correctly closed, 1 `⚠ conflict:` open (row 1).
 
-`stale` — 0. All 22 pages `updated: 2026-10-06`.
-
-`contradictions` — **0 open markers**, up from 4. 6 `✔ resolved:` markers now.
-
-`registry consistency` — all 9 rows match page frontmatter in both directions.
-
-## Why the shape bug survived the test suite
-
-Every `auto_name` test builds its shape by hand: `Shape::from(vec![10,10,10])`,
-`[10,10,10,10]`, `[13,12,12]`, `[10,2]`. **No real board produces any of those.**
-`board.shape()` yields `[10,10,10,6]` for `ortho` and `[14,14,13,12,8]` for `ansi`. The
-tests are correct about the rule and silent about the input, and the one input that
-reaches production — `ansi` — is the one no test uses.
-
-## Next step
-
-**Fix the code, not the wiki.** `auto_name` should derive the row from the layout's own
-`main` layer widths, not `board.shape()`. Cheapest correct form: pass the layer's first-row
-width from the caller that already has it, or compute it from `keys` and the layer at the
-call site. A regression test should parse a real `.dof` — `shai/stronk.dof` is `ansi`
-and 31 keys — and assert the name, since that is the case that fails today.
-
-Until that is fixed, `/speckit.wiki.query` answers "what shape is this layout?" from
-these pages will correctly say: the board's, not the layout's.
+Contradiction check was bounded as configured: 110 page pairs sharing a source ID or a link, out of 378 possible. The 7 new scoring pages share S010/S011, so all their pairwise claims were compared. No incompatible claims found among them — the four pages that describe `score_swap_cached` agree that it still recomputes `finger_usage` for both affected fingers and that the delta is unexploited.
