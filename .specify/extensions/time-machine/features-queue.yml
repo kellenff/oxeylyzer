@@ -1,7 +1,7 @@
 analyzed_at: "2026-10-05T23:47:00Z"
 project_root: "/Users/kellen/Projects/oxeylyzer"
 total_features: 9
-completed: 4
+completed: 5
 features:
   - id: "archive-safety"
     name: "Safe Data Archive Extraction"
@@ -112,12 +112,12 @@ features:
     files:
       - "oxeylyzer-tauri/src/views/EditView.tsx"
       - "oxeylyzer-tauri/src-tauri/src/lib.rs"
-    status: in-progress
-    current_phase: implement
+    status: done
+    current_phase: null
     branch: "feature/time-machine-edit-view-rename-delete"
-    pushed: null
+    pushed: false
     started_at: "2026-10-06T01:33:47Z"
-    completed_at: null
+    completed_at: "2026-10-06T01:59:22Z"
   - id: "layout-auto-naming"
     name: "Layout Auto-Naming Accuracy"
     description: "Derive a generated layout's name from its actual board shape and anchor keys rather than a fixed positional offset that misnames non-standard boards."
