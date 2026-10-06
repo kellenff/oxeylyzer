@@ -12,8 +12,7 @@ project the containment check is `ZipFile::enclosed_name()`, which returns
 It is public API in `zip` 2.4.2, already a dependency of `oxeylyzer-resources`
 (`default-features = false, deflate`). Its implementation walks components with a
 depth counter: `Prefix` and `RootDir` return `None`, `ParentDir` returns `None`
-at depth 0, `Normal` increments depth. That counter is what the ordering question
-below turns on (S001, S003).
+at depth 0, `Normal` increments depth (S001, S003).
 
 ## The prefix must be stripped BEFORE the check
 
@@ -59,9 +58,11 @@ let out_path = dest.join(stripped);                          // ../escaped.txt
 ```
 
 A temporary test in the real crate (since reverted) confirmed the entry extracts
-with `Ok(())` and writes one level above the destination. All 34 pre-existing
-tests pass — `traversal_escaping_root_is_rejected` uses `../../../escaped.txt`,
-three `..`, which both orders reject (S002).
+with `Ok(())` and writes one level above the destination. Being accepted, it is
+then extracted like any other entry: the abort path never engages and the
+sentinel is written as usual (S002). The suite still passes, because
+`traversal_escaping_root_is_rejected` uses `../../../escaped.txt` — three `..`,
+which both orders reject. That count is what leaves this shape undetected (S002).
 
 The comment at lines 85–89 states this rule correctly while the code below it
 does the opposite; its example uses two `..`, so it never demonstrates the
@@ -71,9 +72,8 @@ stays uncorrected in the artifact.
 ## Symlinks are not a vector here
 
 The loop never calls `is_symlink()`, and nothing in the workspace creates
-symlinks. A symlink entry's *content* is the target path, which this code
-writes as ordinary file bytes — no link is ever created, so there is nothing
-later code can follow (S001).
+symlinks. A symlink entry's *content* is the target path, written as ordinary
+file bytes — no link is ever created, so nothing later can follow it (S001).
 
 ## Why the library instead of hand-rolled normalization
 
@@ -81,10 +81,9 @@ Hand-rolled normalization would have to reimplement `..` depth tracking,
 absolute-path detection, and NUL handling — every case the library already
 covers (S001).
 
-Note: the fix is not "call the library twice." Stripping the prefix and then
-re-checking the remainder requires either a second `ZipFile` over the same
-entry or an inline component walk — `enclosed_name()` takes no argument, so
-there is no "validate this subpath" entry point (S002, S003).
+The fix is not "call the library twice": `enclosed_name()` takes no subpath
+argument, so re-checking a stripped remainder needs a second `ZipFile` or an
+inline component walk (S002, S003).
 
 Related: [Data Archive Pipeline](./data-archive-pipeline.md) ·
 [Why Extraction Aborts Instead of Skipping](./why-extraction-aborts-instead-of-skipping.md) ·
