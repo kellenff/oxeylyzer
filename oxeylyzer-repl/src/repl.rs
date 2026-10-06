@@ -399,12 +399,8 @@ impl Repl {
 
     fn placeholder_name(&self, layout: &FastLayout) -> Result<String> {
         for i in 1..1000usize {
-            let new_name = layout
-                .keys
-                .iter()
-                .skip(10)
-                .take(4)
-                .map(|u| self.layout_gen.mapping.get_c(*u))
+            let new_name = auto_name(&layout.keys, &layout.shape, &self.layout_gen.mapping)
+                .chars()
                 .chain(i.to_string().chars())
                 .collect::<String>()
                 .replace('*', "-");
