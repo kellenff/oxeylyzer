@@ -1,7 +1,7 @@
 ---
 title: Layout File Lifecycle
 type: component
-sources: [S008]
+sources: [S008, S009]
 updated: 2026-10-06
 ---
 
@@ -53,5 +53,19 @@ old name (S008). Recorded because it looks like it might need a change.
 
 Same-name saves are deliberately left behaviorally identical (FR-014) (S008).
 
-Related: [Layout Row Separator Convention](./layout-row-separator-convention.md) ·
+## Generated layouts bypass this path
+
+Not part of this lifecycle, and easy to assume otherwise: `save_generated` in
+`lib.rs` does its own `layouts_dir()` join and `std::fs::write`. It does **not** call
+`save_layout_edit`, so it does not get that function's write-then-delete ordering, its
+collision refusal, or its case-only no-op check. It picks the name first
+(`name.unwrap_or_else(…)` → `auto_name` per S009), then lowercases it and replaces
+spaces with underscores to get the filename. Read from `lib.rs:1076-1082` while
+ingesting S009 — not stated in the spec, so verify before relying on it. Note the
+divergent keying too: the file is written under the underscore form, but the in-memory
+map is keyed under the plain lowercase name.
+
+Related: [Auto-Naming Generated Layouts](./auto-layout-naming.md) ·
+[Why One Shared Naming Rule](./why-one-shared-naming-rule.md) ·
+[Layout Row Separator Convention](./layout-row-separator-convention.md) ·
 [Config Root And Data Root](./config-root-and-data-root.md)

@@ -1,13 +1,28 @@
 ---
 title: Layout Row Separator Convention
 type: concept
-sources: [S008]
+sources: [S008, S009]
 updated: 2026-10-06
 ---
 
 Layout rows have no fixed width. Measured across the shipped data files rather
 than assumed: 809 layouts are three rows of ten keys, five are 10/11/10, and one
-is four rows of ten. Boards are `ortho` (811) and `ansi` (4) (S008).
+is `[10, 10, 10, 2]`. Boards are `ortho` (811) and `ansi` (4) (S008).
+
+> ✔ resolved: S009 claimed all 815 shipped layouts were 3×10. Re-enumerated from the
+> published `data-files.zip` (815 `.dof` files, all parsed, 0 unparsed), counting
+> whitespace-separated keys per row of `layers.main`: 809 `[10,10,10]`, 5 `[10,11,10]`,
+> 1 `[10,10,10,2]`. S008's breakdown was right and S009's was wrong. One correction to
+> S008: the odd layout is `[10,10,10,2]`, not four rows of ten. It is `shai/dusk.dof`,
+> `ortho`. The five ragged ones are all `halmak` (`1k/`, `du-en_20-80/`, `english/`) plus
+> `shai/gust.dof` and `shai/stronk.dof`.
+
+**Every one of the 815 has a ten-key first row** — measured above, all 815, no
+exceptions — which is why the
+naming rule's outcome is unchanged for every shipped layout when the shape is taken
+from the layout's own rows (S008, S009). That is *not* true of the shape the code actually passes;
+see [Layout Shape Is The Board's Shape](./layout-shape-is-the-boards-shape.md) and
+[Auto-Naming Generated Layouts](./auto-layout-naming.md).
 
 Some layouts are hand-alternated, separating the two hands with **double
 spaces** (S008). So the whitespace inside a row is a property of the layout, not

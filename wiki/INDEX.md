@@ -17,6 +17,7 @@ page files, not here.
 - [Refresh Replaces Shipped Paths](./pages/refresh-replaces-shipped-paths.md) — built-in data and user layouts share a directory; never prune
 - [The Config Loader Is The Contract](./pages/config-loader-is-the-contract.md) — test the generated config through `Config::with_loaded_weights`, the loader the app itself uses
 - [Why Coverage Is Scoped By Measurement](./pages/why-coverage-is-scoped-by-measurement.md) — the crate's first 25 tests came from two features, so "add coverage" was rescoped to what measurement showed untested
+- [Why One Shared Naming Rule](./pages/why-one-shared-naming-rule.md) — three copies of `skip(10).take(4)` in three crates drifted, with the reasoning recorded as a TODO in only one
 
 ## component
 - [Desktop Startup Failure Reporting](./pages/desktop-startup-failure-reporting.md) — `initialize()` as five blocking steps, each message naming a file and a remedy
@@ -25,6 +26,8 @@ page files, not here.
 - [Generated Config Round-Trip](./pages/generated-config-round-trip.md) — `default_config_toml` → `with_loaded_weights`; TOML placement traps, `Weights` has no `PartialEq`, escaping roots
 - [Platform Root Resolution](./pages/platform-root-resolution.md) — `platform_roots()` asks without creating, `resolve()` adds `create_dir_all`; the FR-006 versus plan conflict
 - [Layout File Lifecycle](./pages/layout-file-lifecycle.md) — `save_layout_edit` writes-then-deletes on rename, refuses collisions, treats case-only names as no-ops
+- [Auto-Naming Generated Layouts](./pages/auto-layout-naming.md) — `auto_name` names from the second row but reads `board.shape()`, so 4 `ansi` layouts change name and SC-002 is violated
+- [Layout Shape Is The Board's Shape](./pages/layout-shape-is-the-boards-shape.md) — `shape` is the form factor's fingering table, not the layout's own rows; `ansi` declares 14 where the layout has 10
 
 
 ## reference
