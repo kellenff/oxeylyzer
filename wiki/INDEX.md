@@ -12,12 +12,18 @@ page files, not here.
 - [Why Extraction Aborts Instead of Skipping](./pages/why-extraction-aborts-instead-of-skipping.md) — the sentinel records a partial archive as a complete install
 - [Why the Data Version Is Hand-Bumped](./pages/why-the-data-version-is-hand-bumped.md) — deriving it from the crate version re-downloads every user's data on each patch release
 - [Refresh Replaces Shipped Paths](./pages/refresh-replaces-shipped-paths.md) — built-in data and user layouts share a directory; never prune
+- [The Config Loader Is The Contract](./pages/config-loader-is-the-contract.md) — test the generated config through `Config::with_loaded_weights`, the loader the app itself uses
+- [Why Coverage Is Scoped By Measurement](./pages/why-coverage-is-scoped-by-measurement.md) — the crate's first 25 tests came from two features, so "add coverage" was rescoped to what measurement showed untested
 
 ## component
 - [Data Archive Pipeline](./pages/data-archive-pipeline.md) — `ensure_data` → `download_and_extract` → `extract_bytes` → `.data-version`; `seed.rs`, `dirs.rs`, `ResourceError`
+- [Generated Config Round-Trip](./pages/generated-config-round-trip.md) — `default_config_toml` → `with_loaded_weights`; TOML placement traps, `Weights` has no `PartialEq`, escaping roots
+- [Platform Root Resolution](./pages/platform-root-resolution.md) — `platform_roots()` asks without creating, `resolve()` adds `create_dir_all`; the FR-006 versus plan conflict
+
+## reference
+- [Shipped Data Files Layout](./pages/shipped-data-files-layout.md) — the real `data-files.zip` ships `english` (146 `.dof`), `english.json`, 58 corpus `.toml`s
+- [Config Root And Data Root](./pages/config-root-and-data-root.md) — two roots, one directory on Windows/macOS; `OXEYLYZER_DATA_DIR` is documented in `dirs.rs` but read in other crates
 
 ## howto
 - [Testing Zip Extraction In-Crate](./pages/testing-zip-extraction-in-crate.md) — `ZipWriter` over a `Cursor`, assert on the filesystem, panic-callback to prove no download
-
-## reference
-_None yet._
+- [Formatting Rust Without cargo fmt](./pages/formatting-rust-without-cargo-fmt.md) — `cargo fmt` cannot load `librustc_driver` here; use the IDE reformat action and revert churn

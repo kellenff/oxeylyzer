@@ -1,26 +1,13 @@
 # Wiki Lint Report — 2026-10-06
 
-No findings.
+| # | Check | Severity | Page | Finding | Suggested fix |
+|---|-------|----------|------|---------|---------------|
+| 1 | contradictions | semantic | platform-root-resolution.md | Open `> ⚠ conflict:` marker: `plan.md` says containment tests use "a temp root shaped like a platform root" (machine-dependence is the stated reason); `spec.md` FR-006 requires deriving from the directories the platform actually reports, without creating anything on disk. Neither side cites the shipped test, because `oxeylyzer-resources/src/dirs.rs` is not a registered source. | Ingest `oxeylyzer-resources/src/dirs.rs` as S007, then resolve in prose by the user: either the plan's rationale is wrong (tests call `platform_roots()` directly) or FR-006 was implemented by a temp root. Keep both claims until then. |
+| 2 | contradictions | semantic | data-version-currency.md | Unresolved marker: S004 `tasks.md` T010 says unparseable versions "map to `Absent`"; S005 shows the shipped code maps a non-empty unparseable sentinel to `Stale { installed: "not-a-version" }`. Behaviorally equivalent (both need a download), but T010's wording is inaccurate and `Stale` propagates the garbage string. | User decision: re-ingest S004 to correct T010, or mark the marker resolved since the behavioral difference is nil. Do not delete either claim by lint. |
+| 3 | contradictions | semantic | archive-path-containment.md | Marker is prefixed `**resolved.**` but still carries the `> ⚠ conflict:` prefix, so a mechanical scan counts it as open. Content is settled: ordering verified against zip 2.4.2 (S003) and a failing test (S002). | Rename the marker to `> ✔ resolved:` so the check stops reporting it. Prose edit is the user's call; lint does not rewrite. |
+| 4 | citations | semantic | platform-root-resolution.md | Paragraph beginning "Reading `oxeylyzer-resources/src/dirs.rs` during ingest, shipped tests call `platform_roots()` directly" carries no source ID — `require_citations` is true. It is the only prose claim in the wiki without a citation. | Resolve together with finding 1: ingesting `dirs.rs` as S007 lets the claim cite `(S007)`. |
+| 5 | citations | semantic | testing-zip-extraction-in-crate.md | Page links `Generated Config Round-Trip` and `The Config Loader Is The Contract` in its `Related:` line but has no S006 claim of its own — S006 was correctly dropped from its frontmatter, leaving those two links pointing at material with no shared source. | No action required; links are valid and cross-references are permitted without sharing a source. Listed for completeness only. |
 
-All six checks pass across 7 pages.
+## Checks clean
 
-- **index-drift** — 7/7 index link texts match page frontmatter titles exactly; the set of index targets equals the set of files in `pages/`; one `##` heading per page type (concept 2, decision 3, component 1, howto 1, reference 0).
-- **links** — 28 page-to-page links plus 7 index→page lines, 0 broken. Citations name S001–S005, all registered, none unknown. Every page's `sources` frontmatter matches the `Pages touched` cells naming it, no registry row claims a page that omits it, and no page body cites an S-id its frontmatter omits.
-- **orphans** — 0. Inbound page links, INDEX excluded, range 2 to 6.
-- **contradictions** — 2 markers, both resolved in place. `archive-path-containment.md` records the plan.md vs tasks.md T002 ordering conflict settled against the `zip` 2.4.2 implementation. `data-version-currency.md` records tasks.md T010's "map to `Absent`" against the shipped `dirs.rs` behavior of mapping an unparseable-but-non-empty sentinel to `Stale`. Each names the source artifacts and the code evidence.
-- **stale** — 0. All seven pages `updated: 2026-10-06`; age 0 days against `stale_after_days: 90`. No source's `Last ingested` date is later than any page citing it. No claim states a bare test count.
-- **citations** — 0 uncited prose paragraphs under `require_citations: true`. All pages under the 600-word cap; largest is 597.
-
-## Resolved since the previous report
-
-The three findings from the last pass are fixed.
-
-**Rows 1–2 — the abort/breach contradiction.** `why-extraction-aborts-instead-of-skipping.md` asserted flatly that "a hostile archive entry aborts extraction … and extraction does not report success," while `archive-path-containment.md` records that `oxeylyzer-data-files/../X.txt` is *accepted* and extracts with `Ok(())`. The abort claim is now scoped to entries the containment check **refuses**, and a new section on that page documents that accepted entries bypass the abort path entirely. The containment page states the same point from its side, so the two reconcile. The page now also cites S002, which the new material depends on.
-
-**Row 3 — bare test count.** "All 34 pre-existing tests pass" is replaced with the claim's actual value: the traversal test uses three `..`, which both orders reject, and that count is what leaves the single-`..` shape undetected. No page states a number that rots.
-
-To keep `archive-path-containment.md` under the 600-word cap while adding two claims, ~30 words of navigation-only prose were trimmed (a forward reference to a heading two lines below, and two closing paragraphs tightened). The page is now 597 words.
-
-## Mechanical fixes applied
-
-None. No index drift, no broken links, no orphans. No page prose, conflict marker, or `sources.md` history was modified by lint itself — the three findings above were semantic and were fixed by hand.
+`index-drift` — 13 pages, all present in `INDEX.md`, no broken index links, `_None yet._` placeholder correctly gone now that `reference` has a page. `links` — zero dead relative links, zero unknown S-ids across all `(Snnn)` citations. `orphans` — every page has at least one inbound page link; `INDEX.md` not counted. `stale` — all 13 pages `updated: 2026-10-06`, age 0 days against a 90-day threshold; no source was re-ingested after any page's `updated` date (S001–S006 all last ingested 2026-10-06).

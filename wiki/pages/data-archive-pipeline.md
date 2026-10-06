@@ -1,7 +1,7 @@
 ---
 title: Data Archive Pipeline
 type: component
-sources: [S001, S004]
+sources: [S001, S004, S006]
 updated: 2026-10-06
 ---
 
@@ -28,6 +28,12 @@ screen (S004). See
 Files: `download.rs` (extraction), `seed.rs` (fatal on failure), `dirs.rs`
 (resolves the data root), `lib.rs` (`ResourceError`). Library crate, workspace
 member; `zip` and `ureq` were both already declared (S001).
+
+`ensure_config` writes the default config on first run; it was only ever asserted
+to exist and to not be overwritten, so a default config no loader could parse
+would have passed the whole suite (S006). See
+[Generated Config Round-Trip](./generated-config-round-trip.md) and
+[The Config Loader Is The Contract](./config-loader-is-the-contract.md).
 
 ## The `extract_bytes` seam
 
@@ -65,4 +71,7 @@ staging, its cleanup path, and its own failure mode. Deferred, not forgotten
 Related: [Archive Path Containment](./archive-path-containment.md) ·
 [Data Version Currency](./data-version-currency.md) ·
 [Testing Zip Extraction In-Crate](./testing-zip-extraction-in-crate.md) ·
-[Refresh Replaces Shipped Paths](./refresh-replaces-shipped-paths.md)
+[Refresh Replaces Shipped Paths](./refresh-replaces-shipped-paths.md) ·
+[Generated Config Round-Trip](./generated-config-round-trip.md) ·
+[Platform Root Resolution](./platform-root-resolution.md) ·
+[Shipped Data Files Layout](./shipped-data-files-layout.md)

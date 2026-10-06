@@ -81,4 +81,6 @@ comparison is tested purely against a temp sentinel, and post-refresh state by
 writing the sentinel and an unshipped file directly (S004).
 
 Related: [Archive Path Containment](./archive-path-containment.md) ·
-[Data Version Currency](./data-version-currency.md)
+[Data Version Currency](./data-version-currency.md) ·
+[Generated Config Round-Trip](./generated-config-round-trip.md) ·
+[The Config Loader Is The Contract](./config-loader-is-the-contract.md)

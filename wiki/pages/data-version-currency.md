@@ -1,7 +1,7 @@
 ---
 title: Data Version Currency
 type: concept
-sources: [S004, S005]
+sources: [S004, S005, S006]
 updated: 2026-10-06
 ---
 
@@ -37,8 +37,9 @@ A recorded version *newer* than current means the user downgraded the app. That
 is `Current`, not `Stale`, so no download occurs and data is not forcibly rolled
 back — FR-005 and SC-004, satisfied without a fourth variant (S004, S005).
 
-> ⚠ conflict: `specs/002-data-version-upgrade/tasks.md` T010 says unparseable
-> versions "map to `Absent`" (S004). The shipped code maps a sentinel that has
+> ⚠ conflict: the `DataCurrency::Absent` rustdoc says the variant covers "an
+> unreadable sentinel", and `specs/002-data-version-upgrade/tasks.md` T010 says
+> unparseable versions "map to `Absent`" (S004, S005). The shipped code maps a sentinel that has
 > content but will not parse to `Stale { installed: "not-a-version" }`, and
 > `Absent` only when the file is missing or empty after trimming
 > (`dirs.rs:98-103, 120-128`) (S005). The distinction does not change behavior
@@ -63,6 +64,26 @@ One external call site, in the Tauri app's startup path; `oxeylyzer-repl` calls
 `ensure_data` unconditionally and relies on the internal gate, so it needed no
 change (S004, S005).
 
+## `Absent` means missing or empty — the rustdoc says otherwise
+
+`installed_version` returns `None` when the sentinel is *missing or empty*, and
+that is the only path to `Absent`; a sentinel holding garbage returns the string
+and lands in `Stale` (S005). But the `Absent` variant's own doc comment claims it
+covers "an unreadable sentinel" (S005) — the same mistake T010's wording makes,
+so the incorrect claim sits in the rustdoc where every user of the type reads it.
+The test name `unreadable_sentinel_version_is_treated_as_stale` contradicts the
+comment sitting directly above it (S005).
+
+The same strictness makes anything non-`u64` `Stale` rather than `Absent`: a
+pre-release suffix, a `v` prefix, or a negative component fails
+`compare_versions`, and the caller maps `None` to `Stale` (S005).
+
+Currency is now also checked against a real-shaped root: a fresh root with no
+sentinel reports data needing download, and repeated platform-root lookups return
+identical roots (S005, S006). See [Platform Root Resolution](./platform-root-resolution.md).
+
 Related: [Data Archive Pipeline](./data-archive-pipeline.md) ·
 [Why the Data Version Is Hand-Bumped](./why-the-data-version-is-hand-bumped.md) ·
-[Refresh Replaces Shipped Paths](./refresh-replaces-shipped-paths.md)
+[Refresh Replaces Shipped Paths](./refresh-replaces-shipped-paths.md) ·
+[Platform Root Resolution](./platform-root-resolution.md) ·
+[Config Root And Data Root](./config-root-and-data-root.md)
