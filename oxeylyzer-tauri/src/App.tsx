@@ -8,9 +8,28 @@ import GenerateView from "./views/GenerateView";
 import LanguageView from "./views/LanguageView";
 import EditView from "./views/EditView";
 import ConfigView from "./views/ConfigView";
-import { initStore, refreshStore, appStore, heatScheme, setHeatScheme } from "./store";
+import { initStore, refreshStore, appStore, setAppStore, heatScheme, setHeatScheme } from "./store";
 import type { HeatScheme } from "./store";
-import { getSession, setSession } from "./api";
+import { getSession, setSession, downloadProgress } from "./api";
+import type { DownloadProgress } from "./api";
+
+/** Human-readable text for a download-progress payload. */
+function progressLabel(p: DownloadProgress): string {
+  switch (p.status) {
+    case "connecting":
+      return "Connecting…";
+    case "downloading": {
+      const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
+      return p.bytesTotal
+        ? `Downloading data files… ${mb(p.bytesDone!)} / ${mb(p.bytesTotal)} MB`
+        : `Downloading data files… ${mb(p.bytesDone!)} MB`;
+    }
+    case "extracting":
+      return "Extracting…";
+    case "done":
+      return "Finishing up…";
+  }
+}
 
 type View = "layouts" | "analyze" | "compare" | "generate" | "language" | "edit" | "config";
 
@@ -32,7 +51,17 @@ function App() {
   let sessionRestored = false;
 
   onMount(async () => {
+    // Startup blocks the event loop on a first-run download, so poll rather than
+    // listen: an event emitted during setup arrives before this handler exists.
+    const poll = window.setInterval(async () => {
+      const p = await downloadProgress().catch(() => null);
+      setAppStore("downloadProgress", p && p.status === "done" ? null : p);
+    }, 250);
+
     await initStore();
+
+    window.clearInterval(poll);
+    setAppStore("downloadProgress", null);
 
     // Refresh (without unmounting views) when files change on disk —
     // config-reloaded means the engine was rebuilt, layouts-reloaded means
@@ -119,6 +148,23 @@ function App() {
             <div class="flex-1 flex items-center justify-center text-neutral-500 text-sm font-mono">
               Loading…
             </div>
+          </Show>
+          {/* First-run data download. Startup blocks on it, so without this the window
+              looks frozen for the length of a multi-megabyte fetch. */}
+          <Show when={appStore.downloadProgress}>
+            {(p) => (
+              <div class="flex-1 flex flex-col items-center justify-center gap-2 text-neutral-500 text-sm font-mono">
+                <div>{progressLabel(p())}</div>
+                <Show when={p().status === "downloading" && p().bytesTotal}>
+                  <div class="w-64 h-1 bg-neutral-800 rounded overflow-hidden">
+                    <div
+                      class="h-full bg-neutral-500"
+                      style={{ width: `${p().bytesDone! / p().bytesTotal! * 100}%` }}
+                    />
+                  </div>
+                </Show>
+              </div>
+            )}
           </Show>
           <Show when={appStore.error}>
             <div class="flex-1 flex items-center justify-center text-red-400 text-sm font-mono">
