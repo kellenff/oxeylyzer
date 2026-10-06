@@ -1,19 +1,19 @@
 analyzed_at: "2026-10-05T23:47:00Z"
 project_root: "/Users/kellen/Projects/oxeylyzer"
 total_features: 9
-completed: 0
+completed: 1
 features:
   - id: "archive-safety"
     name: "Safe Data Archive Extraction"
     description: "Refuse archive entries that would write outside the data directory, and stream the download instead of buffering the whole archive in memory."
     files:
       - "oxeylyzer-resources/src/download.rs"
-    status: in-progress
-    current_phase: implement
+    status: done
+    current_phase: null
     branch: "feature/time-machine-archive-safety"
-    pushed: null
+    pushed: false
     started_at: "2026-10-05T23:52:38Z"
-    completed_at: null
+    completed_at: "2026-10-06T00:04:32Z"
   - id: "data-version-upgrade"
     name: "Data File Version Upgrades"
     description: "Compare the installed data version sentinel against the current version and re-download when data is stale, instead of only checking that the sentinel exists."
