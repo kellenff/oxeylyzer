@@ -9,6 +9,7 @@ page files, not here.
 - [Data Version Currency](./pages/data-version-currency.md) — `DataCurrency` Absent/Stale/Current, component-wise compare, downgrades land in `Current`
 
 ## decision
+- [Why Corpus Load Stays Blocking](./pages/why-corpus-load-stays-blocking.md) — the engine is built from the corpus and ~20 commands hold a lock on it; opening without one is its own project
 - [Why Extraction Aborts Instead of Skipping](./pages/why-extraction-aborts-instead-of-skipping.md) — the sentinel records a partial archive as a complete install
 - [Why the Data Version Is Hand-Bumped](./pages/why-the-data-version-is-hand-bumped.md) — deriving it from the crate version re-downloads every user's data on each patch release
 - [Refresh Replaces Shipped Paths](./pages/refresh-replaces-shipped-paths.md) — built-in data and user layouts share a directory; never prune
@@ -16,13 +17,15 @@ page files, not here.
 - [Why Coverage Is Scoped By Measurement](./pages/why-coverage-is-scoped-by-measurement.md) — the crate's first 25 tests came from two features, so "add coverage" was rescoped to what measurement showed untested
 
 ## component
+- [Desktop Startup Failure Reporting](./pages/desktop-startup-failure-reporting.md) — `initialize()` as five blocking steps, each message naming a file and a remedy
+- [The Setup Hook Runs Before The Webview](./pages/tauri-setup-hook-runs-before-webview.md) — startup events are missed; poll a managed `StartupStatus` instead
 - [Data Archive Pipeline](./pages/data-archive-pipeline.md) — `ensure_data` → `download_and_extract` → `extract_bytes` → `.data-version`; `seed.rs`, `dirs.rs`, `ResourceError`
 - [Generated Config Round-Trip](./pages/generated-config-round-trip.md) — `default_config_toml` → `with_loaded_weights`; TOML placement traps, `Weights` has no `PartialEq`, escaping roots
 - [Platform Root Resolution](./pages/platform-root-resolution.md) — `platform_roots()` asks without creating, `resolve()` adds `create_dir_all`; the FR-006 versus plan conflict
 
 ## reference
 - [Shipped Data Files Layout](./pages/shipped-data-files-layout.md) — the real `data-files.zip` ships `english` (146 `.dof`), `english.json`, 58 corpus `.toml`s
-- [Config Root And Data Root](./pages/config-root-and-data-root.md) — two roots, one directory on Windows/macOS; `OXEYLYZER_DATA_DIR` is documented in `dirs.rs` but read in other crates
+- [Config Root And Data Root](./pages/config-root-and-data-root.md) — two roots, one directory on Windows/macOS; `OXEYLYZER_DATA_DIR` is documented in `dirs.rs` but read at the app boundary
 
 ## howto
 - [Testing Zip Extraction In-Crate](./pages/testing-zip-extraction-in-crate.md) — `ZipWriter` over a `Cursor`, assert on the filesystem, panic-callback to prove no download

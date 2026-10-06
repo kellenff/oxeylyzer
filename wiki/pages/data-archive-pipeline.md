@@ -1,7 +1,7 @@
 ---
 title: Data Archive Pipeline
 type: component
-sources: [S001, S004, S006]
+sources: [S001, S004, S006, S007]
 updated: 2026-10-06
 ---
 
@@ -34,6 +34,11 @@ to exist and to not be overwritten, so a default config no loader could parse
 would have passed the whole suite (S006). See
 [Generated Config Round-Trip](./generated-config-round-trip.md) and
 [The Config Loader Is The Contract](./config-loader-is-the-contract.md).
+
+The desktop app runs this whole pipeline inside one blocking `initialize()` at
+startup, so a failure anywhere in it stops the app before a usable window
+exists — see [Desktop Startup Failure Reporting](./desktop-startup-failure-reporting.md)
+(S007).
 
 ## The `extract_bytes` seam
 
@@ -74,4 +79,5 @@ Related: [Archive Path Containment](./archive-path-containment.md) ·
 [Refresh Replaces Shipped Paths](./refresh-replaces-shipped-paths.md) ·
 [Generated Config Round-Trip](./generated-config-round-trip.md) ·
 [Platform Root Resolution](./platform-root-resolution.md) ·
-[Shipped Data Files Layout](./shipped-data-files-layout.md)
+[Shipped Data Files Layout](./shipped-data-files-layout.md) ·
+[Desktop Startup Failure Reporting](./desktop-startup-failure-reporting.md)

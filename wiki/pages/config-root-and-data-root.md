@@ -1,7 +1,7 @@
 ---
 title: Config Root And Data Root
 type: reference
-sources: [S005, S006]
+sources: [S005, S006, S007]
 updated: 2026-10-06
 ---
 
@@ -35,9 +35,11 @@ variable** — nothing in the file consults the environment (S005). The in-crate
 mechanism is `with_override(root)`, which points both roots at one directory for
 development and tests (S005).
 
-So a reader of `dirs.rs` alone cannot tell where the variable is honored; its
-readers live in other crates that were not ingested here. Worth chasing if the
-override path ever misbehaves, since the two mechanisms are documented as one.
+The variable is a caller-side convention, and the desktop app honors it first
+thing in `resolve_dirs()`: set, it calls `with_override` and skips platform
+resolution entirely (S007). So the two mechanisms are documented as one, and the
+env var wins at the app boundary while being invisible from the crate that
+documents it (S005, S007).
 
 ## `with_override` collapses both roots, same as macOS and Windows
 
@@ -49,4 +51,5 @@ testing a Linux-only arrangement.
 Related: [Platform Root Resolution](./platform-root-resolution.md) ·
 [Data Archive Pipeline](./data-archive-pipeline.md) ·
 [Data Version Currency](./data-version-currency.md) ·
-[Shipped Data Files Layout](./shipped-data-files-layout.md)
+[Shipped Data Files Layout](./shipped-data-files-layout.md) ·
+[Desktop Startup Failure Reporting](./desktop-startup-failure-reporting.md)
