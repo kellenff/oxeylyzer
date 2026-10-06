@@ -72,12 +72,29 @@ features:
     files:
       - "oxeylyzer-repl/src/corpus_transposition.rs"
       - "oxeylyzer-core/src/corpus_cleaner.rs"
-    status: pending
+    status: skipped
     current_phase: null
     branch: null
     pushed: null
     started_at: null
-    completed_at: null
+    completed_at: "2026-10-06T00:51:49Z"
+    # Skipped 2026-10-06 — real bug, deferred to TODO.md so the run can finish.
+    # Investigation found the entry half wrong: `custom shift` and `repeat char` are
+    # implemented and wired (corpus_transposition.rs:233-234, consumed at
+    # corpus_cleaner.rs:388 and :397). Only dead-key mapping is missing.
+    #
+    # The real defect is worse than "unwired": with_dead_key maps
+    # HashMap<char, Vec<char>>, one input char to output chars, so it cannot match a
+    # two-char dead-key sequence. with_dead_key([('a','a')], 'B4') gives
+    # mappings['a'] = ['B4','a'], composing plain letters INTO dead-key sequences --
+    # the inverse of its own docstring, which documents ('a','a') collapsing to 'a'.
+    # Unreachable today because no CorpusConfig field exposes dead keys, but it
+    # corrupts character counts for diacritic languages the moment one is added.
+    # CorpusCleanerIterator already carries a SlidingWindow (line 415) used for
+    # repeat_key, so the sequence matching is wiring, not new infrastructure.
+    # Open question: should dead keys generate uppercase forms, or leave that to the
+    # existing uppercase_versions flag on the `multiple` table?
+
   - id: "tauri-startup-graceful"
     name: "Graceful Desktop Startup Failures"
     description: "Report directory resolution, download, and config load failures as actionable startup errors instead of panicking, so the app can explain what went wrong."
