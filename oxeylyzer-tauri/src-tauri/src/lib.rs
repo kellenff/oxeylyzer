@@ -1223,25 +1223,51 @@ fn save_layout_edit(
         .map_err(|e| format!("Invalid layout JSON: {e}"))?;
     let new_name = layout.name.clone();
 
-    // Find the original file path.
     let lang = state.engine.lock().unwrap().language.clone();
-    let file_name = original_name.replace(' ', "_").to_lowercase();
-    let path = state
-        .dirs
-        .layouts_dir()
-        .join(&lang)
-        .join(&file_name)
-        .with_extension("dof");
+    let original_path = layout_path(&state, &lang, &original_name);
+    let new_path = layout_path(&state, &lang, &new_name);
+    let is_rename = original_path != new_path;
+
+    if is_rename {
+        // Refuse rather than clobber, matching how the REPL handles a name collision.
+        if new_path.exists() {
+            return Err(format!(
+                "Cannot rename to \"{new_name}\": a layout with that name already exists."
+            ));
+        }
+        if !original_path.exists() {
+            return Err(format!(
+                "Cannot save: the file for \"{original_name}\" no longer exists on disk."
+            ));
+        }
+    }
 
     let json = serde_json::to_string_pretty(&dof_json).map_err(|e| e.to_string())?;
-    std::fs::write(&path, &json).map_err(|e| format!("Write failed: {e}"))?;
 
-    // Reload into state.
-    let layout_loaded = Layout::load(&path).map_err(|e| e.to_string())?;
+    // Write first, then remove the old file. A failed write leaves the original
+    // intact; delete-then-write would risk losing the layout.
+    std::fs::write(&new_path, &json).map_err(|e| format!("Write failed: {e}"))?;
+    if is_rename {
+        std::fs::remove_file(&original_path)
+            .map_err(|e| format!("Saved as \"{new_name}\" but could not remove the old file: {e}"))?;
+    }
+
+    let layout_loaded = Layout::load(&new_path).map_err(|e| e.to_string())?;
     let mut layouts = state.layouts.lock().unwrap();
     layouts.remove(&original_name.to_lowercase());
     layouts.insert(new_name.to_lowercase(), layout_loaded);
     Ok(())
+}
+
+/// Path of a layout's file within its language directory.
+fn layout_path(state: &AppState, lang: &str, name: &str) -> PathBuf {
+    let file_name = name.replace(' ', "_").to_lowercase();
+    state
+        .dirs
+        .layouts_dir()
+        .join(lang)
+        .join(&file_name)
+        .with_extension("dof")
 }
 
 #[tauri::command]

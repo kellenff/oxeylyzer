@@ -7,6 +7,32 @@ import { appStore, refreshStore } from "../store";
 import { forkLayout, getLayoutDetail, saveLayoutEdit } from "../api";
 import type { PhysKey } from "../types";
 
+/**
+ * Rebuilds a row from its keys, preserving each gap individually.
+ *
+ * Hand-alternated layouts separate the two hands with double spaces, so a single
+ * hardcoded separator would quietly destroy that convention on every edit. Edits are
+ * positional — the token at `posInRow` is replaced and nothing else changes — so
+ * reconstructing rather than string-splicing is what keeps the row byte-identical.
+ */
+export function joinRow(row: string, keys: string[]): string {
+  const leading = row.match(/^\s*/)?.[0] ?? "";
+  let out = leading;
+  let cursor = leading.length;
+  keys.forEach((key, i) => {
+    out += key;
+    cursor += key.length;
+    if (i < keys.length - 1) {
+      const rest = row.slice(cursor);
+      const gap = rest.match(/^\s+/)?.[0] ?? " ";
+      out += gap;
+      cursor += gap.length;
+    }
+  });
+  const trailing = row.slice(cursor).match(/\s*$/)?.[0] ?? "";
+  return out + trailing;
+}
+
 const FINGER_NAMES = ["LP", "LR", "LM", "LI", "LT", "RT", "RI", "RM", "RR", "RP"] as const;
 type FingerName = (typeof FINGER_NAMES)[number];
 
@@ -153,18 +179,20 @@ export default function EditView(props: Props) {
   // Set after a drag completes to suppress the post-drag click event
   let dragJustHappened = false;
 
+  // Replaces the key at `pos`, preserving each row's own spacing. The previous
+  // version rejoined rows as slice(0,5) + "  " + slice(5), which injected a double
+  // space into every row of every shipped layout — they are all ten keys or wider.
   function applyCharAt(rows: string[], pos: number, char: string) {
     let offset = 0;
     for (let r = 0; r < rows.length; r++) {
-      const rowChars = rows[r].replace(/\s+/g, " ").trim().split(/\s+/);
-      if (pos < offset + rowChars.length) {
-        rowChars[pos - offset] = char;
-        const left = rowChars.slice(0, 5).join(" ");
-        const right = rowChars.slice(5).join(" ");
-        rows[r] = rowChars.length <= 5 ? left : `${left}  ${right}`;
+      const row = rows[r];
+      const keys = row.trim().split(/\s+/);
+      if (pos < offset + keys.length) {
+        keys[pos - offset] = char;
+        rows[r] = joinRow(row, keys);
         return;
       }
-      offset += rowChars.length;
+      offset += keys.length;
     }
   }
 
