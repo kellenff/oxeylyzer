@@ -1,8 +1,8 @@
 use oxeylyzer_core::weights::Config;
 
 use crate::{
+    download::{download_and_extract, DownloadProgress},
     OxeylyzerDirs, ResourceError,
-    download::{DownloadProgress, download_and_extract},
 };
 
 pub fn ensure_data<F>(dirs: &OxeylyzerDirs, progress: F) -> Result<(), ResourceError>
@@ -49,6 +49,8 @@ fn default_config_toml(dirs: &OxeylyzerDirs) -> Result<String, ResourceError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
     use crate::download::{DATA_VERSION, DATA_VERSION_FILE};
 
     fn temp_root(label: &str) -> std::path::PathBuf {
@@ -141,6 +143,136 @@ mod tests {
             "# user edited\n",
             "existing config must be left alone"
         );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The default config the app generates, loaded back through the same loader the
+    /// REPL and Tauri app use at startup.
+    fn generated_config(root: &std::path::Path) -> Config {
+        let dirs = dirs_for(root);
+        ensure_config(&dirs).expect("default config should be written");
+        Config::with_loaded_weights(root.join("config.toml")).expect("generated config must load")
+    }
+
+    #[test]
+    fn generated_config_loads_through_the_app_loader() {
+        let root = temp_root("load");
+        write_sentinel(&root, DATA_VERSION);
+
+        // Panics inside ensure_config's test if the file cannot be loaded at all.
+        let _ = generated_config(&root);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn generated_config_paths_point_inside_the_data_root() {
+        let root = temp_root("paths");
+        write_sentinel(&root, DATA_VERSION);
+        let config = generated_config(&root);
+
+        assert_eq!(
+            config.corpus,
+            root.join("static/language_data/english.json")
+        );
+        assert_eq!(
+            config.layouts,
+            vec![root.join("static/layouts/english").join("*.dof")]
+        );
+        assert_eq!(
+            config.corpus_configs,
+            root.join("static/corpus_configs").join("**").join("*.toml")
+        );
+
+        for path in std::iter::once(&config.corpus)
+            .chain(&config.layouts)
+            .chain(std::iter::once(&config.corpus_configs))
+        {
+            assert!(
+                path.starts_with(&root),
+                "{} escaped the data root",
+                path.display()
+            );
+        }
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn generated_config_preserves_default_weights() {
+        let root = temp_root("weights");
+        write_sentinel(&root, DATA_VERSION);
+        let config = generated_config(&root);
+
+        // Weights has no PartialEq, so compare its serialized form against the defaults.
+        let defaults = Config::default();
+        assert_eq!(
+            toml::to_string(&config.weights).unwrap(),
+            toml::to_string(&defaults.weights).unwrap(),
+            "weights must round-trip as defaults"
+        );
+        assert_eq!(config.trigram_precision, defaults.trigram_precision);
+        assert_eq!(config.max_cores, defaults.max_cores);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn layouts_accept_both_single_string_and_list() {
+        let root = temp_root("layoutsform");
+        // Start from a real generated config so every required field is present; only
+        // the `layouts` line differs between the two files.
+        write_sentinel(&root, DATA_VERSION);
+        ensure_config(&dirs_for(&root)).unwrap();
+        let base = std::fs::read_to_string(root.join("config.toml")).unwrap();
+
+        // Replace in place rather than appending: `layouts` belongs to the top-level
+        // table, so moving it after `[weights]` would silently nest it.
+        let with_layouts = |layouts_toml: &str| {
+            base.lines()
+                .map(|line| {
+                    if line.starts_with("layouts") {
+                        format!("layouts = {layouts_toml}")
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let single = root.join("single.toml");
+        std::fs::write(&single, with_layouts("\"a.dof\"")).unwrap();
+        let listed = root.join("listed.toml");
+        std::fs::write(&listed, with_layouts("[\"a.dof\", \"b.dof\"]")).unwrap();
+
+        let from_single = Config::with_loaded_weights(&single).expect("single form must load");
+        assert_eq!(from_single.layouts, vec![PathBuf::from("a.dof")]);
+
+        let from_list = Config::with_loaded_weights(&listed).expect("list form must load");
+        assert_eq!(
+            from_list.layouts,
+            vec![PathBuf::from("a.dof"), PathBuf::from("b.dof")]
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn paths_needing_escaping_survive_the_round_trip() {
+        // A data root with a space and a non-ASCII character must be escaped on write
+        // and read back byte-identical.
+        let root = std::env::temp_dir().join("oxeylyzer-escaped test \u{e9}\u{20ac}");
+        std::fs::remove_dir_all(&root).ok();
+        write_sentinel(&root, DATA_VERSION);
+
+        let config = generated_config(&root);
+        assert_eq!(
+            config.corpus,
+            root.join("static/language_data/english.json")
+        );
+        assert!(config.corpus.to_string_lossy().contains('\u{e9}'));
+
         std::fs::remove_dir_all(&root).ok();
     }
 }

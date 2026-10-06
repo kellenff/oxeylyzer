@@ -29,16 +29,16 @@ features:
     completed_at: "2026-10-06T00:28:57Z"
   - id: "resources-test-coverage"
     name: "Resource Crate Test Coverage"
-    description: "Add tests covering path resolution under platform and override roots, sentinel-gated download behavior, default config generation, and extraction results."
+    description: "Cover the two remaining untested behaviors in oxeylyzer-resources: that the generated default config round-trips through the app config loader with its three data paths intact, and that all generated paths resolve under the platform root rather than only the override root."
     files:
       - "oxeylyzer-resources/src/dirs.rs"
       - "oxeylyzer-resources/src/seed.rs"
       - "oxeylyzer-resources/src/download.rs"
-    status: pending
-    current_phase: null
-    branch: null
+    status: in-progress
+    current_phase: implement
+    branch: "feature/time-machine-resources-test-coverage"
     pushed: null
-    started_at: null
+    started_at: "2026-10-06T00:32:47Z"
     completed_at: null
   - id: "corpus-config-serialization"
     name: "Corpus Config Serialization Support"

@@ -3,9 +3,8 @@ use std::path::{Path, PathBuf};
 use directories::ProjectDirs;
 
 use crate::{
-    ResourceError,
-    download::{DATA_VERSION, DATA_VERSION_FILE, DownloadProgress},
-    seed,
+    download::{DownloadProgress, DATA_VERSION, DATA_VERSION_FILE},
+    seed, ResourceError,
 };
 
 /// Manages platform-appropriate paths for oxeylyzer configuration and data.
@@ -82,6 +81,19 @@ fn compare_versions(a: &str, b: &str) -> Option<std::cmp::Ordering> {
     Some(a.len().cmp(&b.len()))
 }
 
+/// Where this platform says the application's files live, without creating anything.
+///
+/// Separated from [`OxeylyzerDirs::resolve`] so path containment can be verified
+/// against the real platform directories without writing to the user's config or
+/// data locations.
+fn platform_roots() -> Option<(PathBuf, PathBuf)> {
+    let proj = ProjectDirs::from("", "", "oxeylyzer")?;
+    Some((
+        proj.config_dir().to_path_buf(),
+        proj.data_dir().to_path_buf(),
+    ))
+}
+
 /// Reads the recorded data version from the data root.
 fn installed_version(data_root: &Path) -> Option<String> {
     std::fs::read_to_string(data_root.join(DATA_VERSION_FILE))
@@ -93,10 +105,7 @@ fn installed_version(data_root: &Path) -> Option<String> {
 impl OxeylyzerDirs {
     /// Resolves platform directories and creates them if needed.
     pub fn resolve() -> Result<Self, ResourceError> {
-        let proj = ProjectDirs::from("", "", "oxeylyzer").ok_or(ResourceError::NoDirFound)?;
-
-        let config_root = proj.config_dir().to_path_buf();
-        let data_root = proj.data_dir().to_path_buf();
+        let (config_root, data_root) = platform_roots().ok_or(ResourceError::NoDirFound)?;
 
         std::fs::create_dir_all(&config_root)?;
         std::fs::create_dir_all(&data_root)?;
@@ -335,18 +344,80 @@ mod tests {
     #[test]
     fn needs_download_matches_currency_variant() {
         assert!(DataCurrency::Absent.needs_download());
+        assert!(DataCurrency::Stale {
+            installed: "0.0.1".into()
+        }
+            .needs_download());
+        assert!(!DataCurrency::Current {
+            installed: "1.0.0".into()
+        }
+            .needs_download());
+    }
+
+    #[test]
+    fn platform_derived_paths_all_sit_under_platform_roots() {
+        let Some((config_root, data_root)) = platform_roots() else {
+            // No conventional location on this platform; nothing to assert.
+            return;
+        };
+        let dirs = OxeylyzerDirs {
+            config_root,
+            data_root,
+        };
+
+        for path in [
+            dirs.data_dir(),
+            dirs.layouts_dir().as_path(),
+            dirs.language_data_dir().as_path(),
+            dirs.corpus_configs_dir().as_path(),
+            dirs.text_dir().as_path(),
+            dirs.config_file().as_path(),
+            dirs.session_file().as_path(),
+            dirs.history_file().as_path(),
+            dirs.weight_presets_dir().as_path(),
+        ] {
+            let in_config = path.starts_with(&dirs.config_root);
+            let in_data = path.starts_with(&dirs.data_root);
+            assert!(
+                in_config || in_data,
+                "{} escaped both platform roots",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn platform_roots_are_reported_without_being_created() {
+        let Some((config_root, data_root)) = platform_roots() else {
+            return;
+        };
+        // Recording them must not have created anything; if the user already has an
+        // install these pre-exist, which is fine -- the point is this call creates nothing.
+        let existed_before = config_root.exists() && data_root.exists();
+        let _ = platform_roots();
         assert!(
-            DataCurrency::Stale {
-                installed: "0.0.1".into()
-            }
-                .needs_download()
+            existed_before || (!config_root.exists() && !data_root.exists()),
+            "platform_roots() must not create directories"
         );
-        assert!(
-            !DataCurrency::Current {
-                installed: "1.0.0".into()
-            }
-                .needs_download()
-        );
+    }
+
+    #[test]
+    fn platform_paths_are_stable_across_calls() {
+        let Some(first) = platform_roots() else {
+            return;
+        };
+        let second = platform_roots().expect("platform roots reported inconsistently");
+        assert_eq!(first, second, "platform roots must be stable across calls");
+    }
+
+    #[test]
+    fn absent_sentinel_on_a_fresh_root_needs_data() {
+        let root = temp_root("freshroot");
+        std::fs::create_dir_all(&root).unwrap();
+        let dirs = OxeylyzerDirs::with_override(root.clone());
+        assert_eq!(dirs.data_currency(), DataCurrency::Absent);
+        assert!(dirs.needs_data());
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
