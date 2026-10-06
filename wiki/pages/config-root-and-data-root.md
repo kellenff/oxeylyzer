@@ -1,7 +1,7 @@
 ---
 title: Config Root And Data Root
 type: reference
-sources: [S005, S006, S007]
+sources: [S005, S006, S007, S008]
 updated: 2026-10-06
 ---
 
@@ -26,6 +26,12 @@ Config root holds `config.toml`, `session.json`, `history.txt`, and
 Nine accessors exist — `data_dir`, `layouts_dir`, `language_data_dir`,
 `corpus_configs_dir`, `text_dir`, `config_file`, `session_file`, `history_file`,
 `weight_presets_dir` — and the containment test walks exactly those nine (S005).
+
+**`static/layouts/` is not flat.** Layouts live in one directory per language,
+and names are unique within a language rather than globally — the same layout
+name may legitimately exist under two languages (S008). A collision check that
+searches the whole layouts tree would refuse renames that are fine; see
+[Layout File Lifecycle](./layout-file-lifecycle.md) (S008).
 
 ## `OXEYLYZER_DATA_DIR` is documented here but read elsewhere
 

@@ -7,6 +7,8 @@ page files, not here.
 ## concept
 - [Archive Path Containment](./pages/archive-path-containment.md) — `enclosed_name()`, prefix-strip ordering, and a verified single-`..` breach in `download.rs`
 - [Data Version Currency](./pages/data-version-currency.md) — `DataCurrency` Absent/Stale/Current, component-wise compare, downgrades land in `Current`
+- [Layout Row Separator Convention](./pages/layout-row-separator-convention.md) — row gaps are the layout's, not the editor's; hand-alternated layouts use double spaces
+
 
 ## decision
 - [Why Corpus Load Stays Blocking](./pages/why-corpus-load-stays-blocking.md) — the engine is built from the corpus and ~20 commands hold a lock on it; opening without one is its own project
@@ -22,6 +24,8 @@ page files, not here.
 - [Data Archive Pipeline](./pages/data-archive-pipeline.md) — `ensure_data` → `download_and_extract` → `extract_bytes` → `.data-version`; `seed.rs`, `dirs.rs`, `ResourceError`
 - [Generated Config Round-Trip](./pages/generated-config-round-trip.md) — `default_config_toml` → `with_loaded_weights`; TOML placement traps, `Weights` has no `PartialEq`, escaping roots
 - [Platform Root Resolution](./pages/platform-root-resolution.md) — `platform_roots()` asks without creating, `resolve()` adds `create_dir_all`; the FR-006 versus plan conflict
+- [Layout File Lifecycle](./pages/layout-file-lifecycle.md) — `save_layout_edit` writes-then-deletes on rename, refuses collisions, treats case-only names as no-ops
+
 
 ## reference
 - [Shipped Data Files Layout](./pages/shipped-data-files-layout.md) — the real `data-files.zip` ships `english` (146 `.dof`), `english.json`, 58 corpus `.toml`s

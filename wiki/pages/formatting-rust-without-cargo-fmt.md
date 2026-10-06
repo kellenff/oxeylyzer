@@ -1,7 +1,7 @@
 ---
 title: Formatting Rust Without cargo fmt
 type: howto
-sources: [S006, S007]
+sources: [S006, S007, S008]
 updated: 2026-10-06
 ---
 
@@ -14,15 +14,27 @@ Format with the JetBrains reformat action instead, and revert any unrelated
 reformatting it introduces. The action is not scoped to the files you edited, so
 the revert is part of the task rather than optional cleanup (S006).
 
-**The churn is recurring, and the revert is not free.** On the next feature the
-action reformatted unrelated regions again (`load_corpus`, `generate_batch`), and
-a blanket string replace to undo it corrupted `generate_batch`'s final match arm
-— the function had to be restored from HEAD by extracting and reinserting the
-region (S007).
+**The churn is recurring, and the revert is not free.** Across three consecutive
+features the action reformatted unrelated regions every time — `load_corpus`
+and `generate_batch` among them (S007, S008). `generate_batch`'s final match
+arm was damaged twice and had to be restored from HEAD, once by region
+extraction and reinsertion and once line-wise (S007, S008). The churn itself is
+not the expensive part; recovering the mangled function is.
 
-So: review the reformat diff by function name, not by line count, and never
-undo churn with a broad string replace. Every removed line in the resulting diff
-should be a line this change deliberately replaces (S007).
+> ⚠ conflict: the two accounts disagree about what damaged the match arm.
+> `specs/005-tauri-startup-graceful/tasks.md` says the **blanket string replace**
+> used to undo the churn corrupted it (S007). `specs/006-edit-view-rename-delete/tasks.md`
+> says the **JetBrains action itself** mangled it, both times (S008).
+
+The procedure covers either cause, which is why it does not have to pick: run
+the formatter, then read the diff's hunk list before committing, and never undo
+churn with a broad string replace (S007, S008). Review by function name, not
+line count — every removed line should be one the change deliberately replaces,
+and if a function you did not touch appears in the diff, treat its contents as
+suspect rather than assuming the diff is honest (S007, S008).
+
+Three features running makes this expected work rather than an anomaly (S008).
 
 Related: [Why Coverage Is Scoped By Measurement](./why-coverage-is-scoped-by-measurement.md) ·
-[Desktop Startup Failure Reporting](./desktop-startup-failure-reporting.md)
+[Desktop Startup Failure Reporting](./desktop-startup-failure-reporting.md) ·
+[Layout File Lifecycle](./layout-file-lifecycle.md)
