@@ -1329,24 +1329,29 @@ mod tests {
         }
     }
 
+    /// The cached and uncached paths must agree on both the best swap and its
+    /// score, including when neither finds an improvement. This is the only
+    /// independent check that the optimisation of `score_swap_cached` stayed
+    /// faithful: scoring is compared as exact integers, so a cached score that
+    /// drifts would silently change which layouts are considered better.
     #[test]
     fn best_found_swap() {
         let mut qwerty = QWERTY.clone();
         let cache = GEN.initialize_cache(&qwerty);
 
-        if let (Some(best_swap_normal), best_score_normal) =
-            GEN.best_swap(&mut qwerty, None, &QWERTY.possible_swaps)
-        {
-            if let (Some(best_swap_cached), best_score_cached) =
-                GEN.best_swap_cached(&mut qwerty, &cache, &QWERTY.possible_swaps, None)
-            {
-                if best_score_normal == best_score_cached {
-                    assert_eq!(best_swap_normal, best_swap_cached);
-                } else {
-                    println!("scores not the same")
-                }
-            }
-        }
+        let (best_swap_normal, best_score_normal) =
+            GEN.best_swap(&mut qwerty, None, &QWERTY.possible_swaps);
+        let (best_swap_cached, best_score_cached) =
+            GEN.best_swap_cached(&mut qwerty, &cache, &QWERTY.possible_swaps, None);
+
+        assert_eq!(
+            best_score_cached, best_score_normal,
+            "cached and uncached disagree on the best score",
+        );
+        assert_eq!(
+            best_swap_cached, best_swap_normal,
+            "cached and uncached disagree on the best swap",
+        );
     }
 
     #[test]
@@ -1363,7 +1368,7 @@ mod tests {
 
             if let Some(score_cached) = maybe_score_cached {
                 assert!(
-                    score_cached == SMALLEST_SCORE + 1000 || score_normal == score_cached,
+                    score_normal == score_cached,
                     "failed on iteration {i} for {}",
                     QWERTY.possible_swaps[i]
                 );
