@@ -1,7 +1,7 @@
 ---
 title: Formatting Rust Without cargo fmt
 type: howto
-sources: [S006, S007, S008]
+sources: [S006, S007, S008, S010]
 updated: 2026-10-06
 ---
 
@@ -14,12 +14,19 @@ Format with the JetBrains reformat action instead, and revert any unrelated
 reformatting it introduces. The action is not scoped to the files you edited, so
 the revert is part of the task rather than optional cleanup (S006).
 
-**The churn is recurring, and the revert is not free.** Across three consecutive
-features the action reformatted unrelated regions every time — `load_corpus`
-and `generate_batch` among them (S007, S008). `generate_batch`'s final match
-arm was damaged twice and had to be restored from HEAD, once by region
-extraction and reinsertion and once line-wise (S007, S008). The churn itself is
-not the expensive part; recovering the mangled function is.
+**The churn is recurring, and the revert is not free.** Across four consecutive
+features the action reformatted unrelated regions every time — `load_corpus`,
+`generate_batch` and `Oxeylyzer::new` among them (S007, S008, S010).
+`generate_batch`'s final match arm was damaged twice and had to be restored from
+HEAD, once by region extraction and reinsertion and once line-wise (S007, S008).
+The churn itself is not the expensive part; recovering the mangled function is.
+
+Fourth instance, confirmed in `410324f`: the only source file changed was
+`generate.rs`, edited around line 702, and the action also reindented the `where`
+clause of `Oxeylyzer::new` at line 240 — 460 lines away, in a function the change
+never mentions (S010). The unrelated hunk is always in the *same* file as the
+real edit, so a file-level diff is enough to catch it; nothing else in the repo
+was touched (S010).
 
 > ✔ resolved: the two accounts disagree about what damaged the match arm.
 > `specs/005-tauri-startup-graceful/tasks.md` says the **blanket string replace**

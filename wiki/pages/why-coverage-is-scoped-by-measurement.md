@@ -1,7 +1,7 @@
 ---
 title: Why Coverage Is Scoped By Measurement
 type: decision
-sources: [S006]
+sources: [S006, S010]
 updated: 2026-10-06
 ---
 
@@ -36,6 +36,21 @@ The remaining two gaps were the generated default config round-tripping through
 the app's loader, and containment against platform-reported directories — the
 second having passed before because every test supplied its own root (S006).
 
+## The same correction happened again, in scoring
+
+Different subject, same shape: **the queued entry was wrong, and the spec was
+rewritten against what the code actually does** (S006, S010).
+`specs/008-generate-dead-code` asked for two things — delete "dead code", and
+optimize a marked hot path. Inspection found `obsolete.rs` is the uncached
+reference path the comparison test and the benchmark both depend on, and the
+`TODO: optimize` sat on one of six identical match arms pointing at the wrong
+line (S010). What shipped instead was a split that makes a later optimization
+expressible, plus two tests establishing the property it would depend on (S010).
+
+Both times the fix was the same: measure, then respecify against what is there
+rather than against what the queue note assumed was there. The durable value of
+a queue entry is the suspicion it raises, not the diagnosis it carries.
+
 The work shipped without new dependencies and with no build-time cost; the one
 obstruction was that `cargo fmt` does not run on this machine, so formatting went
 through the IDE reformat action — see
@@ -45,4 +60,6 @@ Related: [Platform Root Resolution](./platform-root-resolution.md) ·
 [Testing Zip Extraction In-Crate](./testing-zip-extraction-in-crate.md) ·
 [The Config Loader Is The Contract](./config-loader-is-the-contract.md) ·
 [Data Archive Pipeline](./data-archive-pipeline.md) ·
-[Formatting Rust Without cargo fmt](./formatting-rust-without-cargo-fmt.md)
+[Formatting Rust Without cargo fmt](./formatting-rust-without-cargo-fmt.md) ·
+[Why obsolete.rs Stays](./why-obsolete-rs-stays.md) ·
+[Scoring Cache And LayoutCache](./scoring-cache-and-layout-cache.md)

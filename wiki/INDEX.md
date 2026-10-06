@@ -8,6 +8,8 @@ page files, not here.
 - [Archive Path Containment](./pages/archive-path-containment.md) — `enclosed_name()`, prefix-strip ordering, and a verified single-`..` breach in `download.rs`
 - [Data Version Currency](./pages/data-version-currency.md) — `DataCurrency` Absent/Stale/Current, component-wise compare, downgrades land in `Current`
 - [Layout Row Separator Convention](./pages/layout-row-separator-convention.md) — row gaps are the layout's, not the editor's; hand-alternated layouts use double spaces
+- [Exact-Integer Scoring Is An Invariant](./pages/exact-integer-scoring-is-an-invariant.md) — scores compare as `i64`, so "identical" is bit-for-bit; a one-unit shift silently changes which layouts are saved
+- [Swap Moves Two Characters](./pages/swap-moves-two-characters.md) — only two fingers' usage can change per swap, making each derivable from its cached value by a two-term delta
 
 
 ## decision
@@ -16,8 +18,10 @@ page files, not here.
 - [Why the Data Version Is Hand-Bumped](./pages/why-the-data-version-is-hand-bumped.md) — deriving it from the crate version re-downloads every user's data on each patch release
 - [Refresh Replaces Shipped Paths](./pages/refresh-replaces-shipped-paths.md) — built-in data and user layouts share a directory; never prune
 - [The Config Loader Is The Contract](./pages/config-loader-is-the-contract.md) — test the generated config through `Config::with_loaded_weights`, the loader the app itself uses
-- [Why Coverage Is Scoped By Measurement](./pages/why-coverage-is-scoped-by-measurement.md) — the crate's first 25 tests came from two features, so "add coverage" was rescoped to what measurement showed untested
+- [Why Coverage Is Scoped By Measurement](./pages/why-coverage-is-scoped-by-measurement.md) — the crate's first 25 tests came from two features, so "add coverage" was rescoped to what measurement showed untested; the same correction recurred in 008
 - [Why One Shared Naming Rule](./pages/why-one-shared-naming-rule.md) — three copies of `skip(10).take(4)` in three crates drifted, with the reasoning recorded as a TODO in only one
+- [Why obsolete.rs Stays](./pages/why-obsolete-rs-stays.md) — the "obsolete" module is the uncached reference path the comparison test and benchmark depend on; deleting it removes the only independent check
+- [Why Scoring Does Not Mutate The Cache](./pages/why-scoring-does-not-mutate-the-cache.md) — a scored-but-rejected swap would leave values behind and silently corrupt every later candidate
 
 ## component
 - [Desktop Startup Failure Reporting](./pages/desktop-startup-failure-reporting.md) — `initialize()` as five blocking steps, each message naming a file and a remedy
@@ -28,6 +32,8 @@ page files, not here.
 - [Layout File Lifecycle](./pages/layout-file-lifecycle.md) — `save_layout_edit` writes-then-deletes on rename, refuses collisions, treats case-only names as no-ops
 - [Auto-Naming Generated Layouts](./pages/auto-layout-naming.md) — `auto_name` names from the second row but reads `board.shape()`, so 4 `ansi` layouts change name and SC-002 is violated
 - [Layout Shape Is The Board's Shape](./pages/layout-shape-is-the-boards-shape.md) — `shape` is the form factor's fingering table, not the layout's own rows; `ansi` declares 14 where the layout has 10
+- [Scoring Cache And LayoutCache](./pages/scoring-cache-and-layout-cache.md) — `initialize_cache` fills seven totals once; `score_swap_cached` recomputes both affected fingers, `accept_swap` is the only mutator
+- [Finger Usage Is Summation Plus Penalty](./pages/finger-usage-is-summation-plus-penalty.md) — `finger_usage` fused a frequency sum with an over-use penalty; split so the cached path can read a cached usage number; `i64` throughout, never `f64`
 
 
 ## reference
