@@ -1,0 +1,113 @@
+analyzed_at: "2026-10-05T23:47:00Z"
+project_root: "/Users/kellen/Projects/oxeylyzer"
+total_features: 9
+completed: 0
+features:
+  - id: "archive-safety"
+    name: "Safe Data Archive Extraction"
+    description: "Refuse archive entries that would write outside the data directory, and stream the download instead of buffering the whole archive in memory."
+    files:
+      - "oxeylyzer-resources/src/download.rs"
+    status: in-progress
+    current_phase: implement
+    branch: "feature/time-machine-archive-safety"
+    pushed: null
+    started_at: "2026-10-05T23:52:38Z"
+    completed_at: null
+  - id: "data-version-upgrade"
+    name: "Data File Version Upgrades"
+    description: "Compare the installed data version sentinel against the current version and re-download when data is stale, instead of only checking that the sentinel exists."
+    files:
+      - "oxeylyzer-resources/src/seed.rs"
+      - "oxeylyzer-resources/src/download.rs"
+      - "oxeylyzer-resources/src/dirs.rs"
+    status: pending
+    current_phase: null
+    branch: null
+    pushed: null
+    started_at: null
+    completed_at: null
+  - id: "resources-test-coverage"
+    name: "Resource Crate Test Coverage"
+    description: "Add tests covering path resolution under platform and override roots, sentinel-gated download behavior, default config generation, and extraction results."
+    files:
+      - "oxeylyzer-resources/src/dirs.rs"
+      - "oxeylyzer-resources/src/seed.rs"
+      - "oxeylyzer-resources/src/download.rs"
+    status: pending
+    current_phase: null
+    branch: null
+    pushed: null
+    started_at: null
+    completed_at: null
+  - id: "corpus-config-serialization"
+    name: "Corpus Config Serialization Support"
+    description: "Serialize the Multiple character-mapping struct instead of panicking, so corpus configurations round-trip rather than hitting an unimplemented path."
+    files:
+      - "oxeylyzer-repl/src/corpus_transposition.rs"
+    status: pending
+    current_phase: null
+    branch: null
+    pushed: null
+    started_at: null
+    completed_at: null
+  - id: "dead-key-mapping"
+    name: "Dead Key and Shift Mapping"
+    description: "Map dead keys, custom shift, and repeat characters when cleaning corpora so languages with diacritics and layered layouts produce accurate character counts."
+    files:
+      - "oxeylyzer-repl/src/corpus_transposition.rs"
+      - "oxeylyzer-core/src/corpus_cleaner.rs"
+    status: pending
+    current_phase: null
+    branch: null
+    pushed: null
+    started_at: null
+    completed_at: null
+  - id: "tauri-startup-graceful"
+    name: "Graceful Desktop Startup Failures"
+    description: "Report directory resolution, download, and config load failures as actionable startup errors instead of panicking, so the app can explain what went wrong."
+    files:
+      - "oxeylyzer-tauri/src-tauri/src/lib.rs"
+    status: pending
+    current_phase: null
+    branch: null
+    pushed: null
+    started_at: null
+    completed_at: null
+  - id: "edit-view-rename-delete"
+    name: "Layout Rename Consistency"
+    description: "Make editing a layout's name leave no orphaned file on disk, and remove the assumption that boards are always a five-plus-five row split."
+    files:
+      - "oxeylyzer-tauri/src/views/EditView.tsx"
+      - "oxeylyzer-tauri/src-tauri/src/lib.rs"
+    status: pending
+    current_phase: null
+    branch: null
+    pushed: null
+    started_at: null
+    completed_at: null
+  - id: "layout-auto-naming"
+    name: "Layout Auto-Naming Accuracy"
+    description: "Derive a generated layout's name from its actual board shape and anchor keys rather than a fixed positional offset that misnames non-standard boards."
+    files:
+      - "oxeylyzer-core/src/layout.rs"
+      - "oxeylyzer-core/src/fast_layout.rs"
+    status: pending
+    current_phase: null
+    branch: null
+    pushed: null
+    started_at: null
+    completed_at: null
+  - id: "generate-dead-code"
+    name: "Generation Dead Code and Hot Path"
+    description: "Remove obsolete generation code that is compiled but unreachable, and address the scoring hot path that recomputes per-finger usage on every candidate."
+    files:
+      - "oxeylyzer-core/src/generate/obsolete.rs"
+      - "oxeylyzer-core/src/generate.rs"
+      - "oxeylyzer-core/src/fast_layout.rs"
+    status: pending
+    current_phase: null
+    branch: null
+    pushed: null
+    started_at: null
+    completed_at: null
