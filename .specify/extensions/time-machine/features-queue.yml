@@ -112,11 +112,11 @@ features:
     files:
       - "oxeylyzer-tauri/src/views/EditView.tsx"
       - "oxeylyzer-tauri/src-tauri/src/lib.rs"
-    status: pending
-    current_phase: null
-    branch: null
+    status: in-progress
+    current_phase: implement
+    branch: "feature/time-machine-edit-view-rename-delete"
     pushed: null
-    started_at: null
+    started_at: "2026-10-06T01:33:47Z"
     completed_at: null
   - id: "layout-auto-naming"
     name: "Layout Auto-Naming Accuracy"
