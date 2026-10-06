@@ -6,15 +6,18 @@ page files, not here.
 
 ## concept
 - [Archive Path Containment](./pages/archive-path-containment.md) — `enclosed_name()`, prefix-strip ordering, and a verified single-`..` breach in `download.rs`
+- [Data Version Currency](./pages/data-version-currency.md) — `DataCurrency` Absent/Stale/Current, component-wise compare, downgrades land in `Current`
 
 ## decision
 - [Why Extraction Aborts Instead of Skipping](./pages/why-extraction-aborts-instead-of-skipping.md) — the sentinel records a partial archive as a complete install
+- [Why the Data Version Is Hand-Bumped](./pages/why-the-data-version-is-hand-bumped.md) — deriving it from the crate version re-downloads every user's data on each patch release
+- [Refresh Replaces Shipped Paths](./pages/refresh-replaces-shipped-paths.md) — built-in data and user layouts share a directory; never prune
 
 ## component
-- [Data Archive Pipeline](./pages/data-archive-pipeline.md) — `download.rs` → `extract_bytes` → `.data-version`; `seed.rs`, `dirs.rs`, `ResourceError`
+- [Data Archive Pipeline](./pages/data-archive-pipeline.md) — `ensure_data` → `download_and_extract` → `extract_bytes` → `.data-version`; `seed.rs`, `dirs.rs`, `ResourceError`
 
 ## howto
-- [Testing Zip Extraction In-Crate](./pages/testing-zip-extraction-in-crate.md) — `ZipWriter` over a `Cursor`, assert on the filesystem, mutation-check the guard
+- [Testing Zip Extraction In-Crate](./pages/testing-zip-extraction-in-crate.md) — `ZipWriter` over a `Cursor`, assert on the filesystem, panic-callback to prove no download
 
 ## reference
 _None yet._

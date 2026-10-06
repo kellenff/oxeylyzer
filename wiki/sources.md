@@ -8,3 +8,5 @@ Sources are immutable inputs — the wiki never edits them.
 | S001 | `specs/001-archive-safety/` | feature-artifact | 2026-10-06 | 2026-10-06 | archive-path-containment.md, data-archive-pipeline.md, why-extraction-aborts-instead-of-skipping.md, testing-zip-extraction-in-crate.md |
 | S002 | `oxeylyzer-resources/src/download.rs` | file | 2026-10-06 | 2026-10-06 | archive-path-containment.md, testing-zip-extraction-in-crate.md |
 | S003 | `https://docs.rs/crate/zip/2.4.2/source/src/types.rs` | url | 2026-10-06 | 2026-10-06 | archive-path-containment.md |
+| S004 | `specs/002-data-version-upgrade/` | feature-artifact | 2026-10-06 | 2026-10-06 | data-version-currency.md, refresh-replaces-shipped-paths.md, why-the-data-version-is-hand-bumped.md, data-archive-pipeline.md, testing-zip-extraction-in-crate.md |
+| S005 | `oxeylyzer-resources/src/dirs.rs` | file | 2026-10-06 | 2026-10-06 | data-version-currency.md |

@@ -1,22 +1,29 @@
 ---
 title: Data Archive Pipeline
 type: component
-sources: [S001]
+sources: [S001, S004]
 updated: 2026-10-06
 ---
 
 `oxeylyzer-resources` owns the only path in the app where untrusted remote
-data reaches the filesystem. The zip is downloaded on first run and nobody
-verifies its contents, so this component is the whole blast radius of a
-crafted archive (S001).
+data reaches the filesystem. The zip is downloaded when the installation has no
+recorded data version or one that is behind the current build's, and nobody
+verifies its contents — so this component is the whole blast radius of a
+crafted archive (S001, S004).
 
 ```text
-download_and_extract          ureq 2 fetch → bytes in memory
-  └─ extract_bytes(&[u8], &Path)   private; does the extraction loop
-       ├─ ZipFile::enclosed_name()  containment check
-       └─ .data-version sentinel    written only after the loop
-seed.rs                       treats a failed download as fatal
+seed.rs::ensure_data          branches on dirs.needs_data()
+  └─ download_and_extract     ureq 2 fetch → bytes in memory
+       └─ extract_bytes(&[u8], &Path)   private; does the extraction loop
+            ├─ ZipFile::enclosed_name()  containment check
+            └─ .data-version sentinel    written only after the loop
 ```
+
+`ensure_data` then always calls `ensure_config`, which is idempotent and safe on
+every startup (S004). Both `oxeylyzer-repl` and `oxeylyzer-tauri` call it
+unconditionally; only the Tauri app also gates on `needs_data()` for its startup
+screen (S004). See
+[Data Version Currency](./data-version-currency.md).
 
 Files: `download.rs` (extraction), `seed.rs` (fatal on failure), `dirs.rs`
 (resolves the data root), `lib.rs` (`ResourceError`). Library crate, workspace
@@ -35,12 +42,18 @@ seam the containment rules are untestable at all (S001).
 carried a `String`, so refusal errors name the offending entry without adding
 a variant. `download.rs` propagates every failure with `?` (S001).
 
-## The sentinel is the install's commit record
+## The sentinel is both the commit record and the version gate
 
 `.data-version` is written only after the extraction loop completes. Anything
-that lets the loop finish early writes the sentinel and marks a partial
-archive as a complete install — see
+that lets the loop finish early writes the sentinel and marks a partial archive
+as a complete install — see
 [Why Extraction Aborts Instead of Skipping](./why-extraction-aborts-instead-of-skipping.md) (S001).
+
+It is now also read on every startup to decide whether data must be downloaded at
+all, so the same file that marks an install complete is the one whose staleness
+triggers an upgrade (S004). One property, two jobs: a failed refresh leaves the
+old version recorded, so the next startup retries (FR-009, FR-010) — see
+[Refresh Replaces Shipped Paths](./refresh-replaces-shipped-paths.md).
 
 ## Streaming the download was deliberately skipped
 
@@ -50,4 +63,6 @@ staging, its cleanup path, and its own failure mode. Deferred, not forgotten
 (S001).
 
 Related: [Archive Path Containment](./archive-path-containment.md) ·
-[Testing Zip Extraction In-Crate](./testing-zip-extraction-in-crate.md)
+[Data Version Currency](./data-version-currency.md) ·
+[Testing Zip Extraction In-Crate](./testing-zip-extraction-in-crate.md) ·
+[Refresh Replaces Shipped Paths](./refresh-replaces-shipped-paths.md)

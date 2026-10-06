@@ -1,7 +1,7 @@
 ---
 title: Testing Zip Extraction In-Crate
 type: howto
-sources: [S001, S002]
+sources: [S001, S002, S004]
 updated: 2026-10-06
 ---
 
@@ -57,7 +57,28 @@ Tests call `extract_bytes` directly — see the seam in
 One planned helper was written and then deleted: the directory-tree walker
 became unused once assertions targeted specific paths (S001).
 
-Result at time of writing: 7 new tests, 178 in the workspace (171
-pre-existing), clippy and fmt clean (S001).
+## Proving a download did *not* happen: pass a callback that panics
 
-Related: [Archive Path Containment](./archive-path-containment.md)
+A gate that must avoid the network cannot be tested by asserting on a return
+value — absence of a request is not visible in a `Result`. Pass a progress
+callback that panics: `|_| panic!("download must not run for current data")`.
+If the version gate ever fails to short-circuit, the test panics instead of
+quietly reaching the network (S004).
+
+This replaced a task written to call `ensure_data` with a stale or absent
+sentinel and assert the download failed. It did not fail: those tests hit the
+real network, downloaded the actual `data-files.zip`, and extracted the real
+corpus into a temp directory, so they were really asserting "did GitHub
+respond" (S004).
+
+The accidental live run was still useful evidence — a `0.0.1` sentinel advanced
+to `1.0.0` and the real archive extracted cleanly through the containment check
+(S004). It is *not* evidence about the ordering bug above: a clean run against
+the genuine archive says nothing about whether a hostile one would be refused.
+
+Split decision from effect when testing a gate like this — the version
+comparison is tested purely against a temp sentinel, and post-refresh state by
+writing the sentinel and an unshipped file directly (S004).
+
+Related: [Archive Path Containment](./archive-path-containment.md) ·
+[Data Version Currency](./data-version-currency.md)
