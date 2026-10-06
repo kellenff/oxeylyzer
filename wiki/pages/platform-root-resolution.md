@@ -29,9 +29,9 @@ Every fixed location is derived by joining onto the config root or data root, so
 containment holds by construction; the tests verify it rather than trusting the
 construction (S006).
 
-## The plan's test strategy contradicts FR-006
+## The plan's test strategy contradicted FR-006
 
-> ⚠ conflict: `plan.md` says the containment tests use "a temp root shaped like a
+> ✔ resolved: `plan.md` said the containment tests use "a temp root shaped like a
 > platform root", because deriving from the actual platform paths "would make the
 > test machine-dependent"; `spec.md` FR-006 requires exactly that — paths
 > derived from the directories the platform *reports*, verified without creating
@@ -42,12 +42,12 @@ calls `platform_roots()` and asserts each of the nine derived paths starts with
 either root; `platform_roots_are_reported_without_being_created` and
 `platform_paths_are_stable_across_calls` do the same (S005). The plan's
 temp-root approach was not used, so `plan.md`'s rationale is stale prose in an
-immutable artifact — it corrects nothing in the wiki (S005, S006).
+immutable artifact and corrects nothing here (S005, S006).
 
-Both markers stay because `plan.md` cannot be edited from here and its
-machine-dependence argument remains a live tradeoff for whoever reads it: the
-shipped tests *are* machine-dependent, skipping silently when a platform reports
-no conventional location rather than failing (S005).
+The marker is closed rather than deleted because `plan.md` cannot be edited from
+here and its machine-dependence argument still describes the shipped code: the
+platform tests *are* machine-dependent, skipping silently where a platform
+reports no conventional location rather than failing (S005).
 
 Also verified alongside the split: repeated calls report identical roots, and a
 fresh root with no `.data-version` reports data needing download — see

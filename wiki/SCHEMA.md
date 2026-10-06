@@ -22,6 +22,10 @@ change the rules; `/speckit.wiki.*` commands read it before writing anything.
 - A page that outgrows 600 words is split, and both halves link to each other.
 - Conflicting claims are kept side by side under a `> ⚠ conflict:` marker
   until resolved — never silently overwritten.
+- Once a disagreement is settled, the marker becomes `> ✔ resolved:` and names
+  the settling evidence. Both claims stay visible; only the state changes. Lint
+  counts `⚠ conflict:` as open and `✔ resolved:` as closed, so a settled
+  question stops being reported without its history being erased.
 - Frontmatter per page: `title`, `type`, `sources`, `updated` (ISO date).
 
 ## Maintenance workflows

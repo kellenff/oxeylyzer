@@ -22,7 +22,7 @@ to 0, and **accepts** it. Strip the prefix first and the remainder `../escaped.t
 starts at depth 0, so `ParentDir` hits `depth.checked_sub(1)` on 0 and
 returns `None` (S001, S003).
 
-> ⚠ conflict: **resolved.** `specs/001-archive-safety/plan.md` prescribes
+> ✔ resolved: `specs/001-archive-safety/plan.md` prescribes
 > strip-then-check, which is correct. `specs/001-archive-safety/tasks.md` T002
 > prescribes the opposite ("strip `ZIP_INNER_PREFIX` from the *enclosed* path,
 > after the containment check"), and the shipped code follows T002 — which is
