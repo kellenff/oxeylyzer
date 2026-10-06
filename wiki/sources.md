@@ -1,0 +1,10 @@
+# Source Registry
+
+Append-only IDs (S001, S002…). Dedup key: normalized path or URL.
+Sources are immutable inputs — the wiki never edits them.
+
+| ID | Source | Type | First ingested | Last ingested | Pages touched |
+|----|--------|------|----------------|---------------|---------------|
+| S001 | `specs/001-archive-safety/` | feature-artifact | 2026-10-06 | 2026-10-06 | archive-path-containment.md, data-archive-pipeline.md, why-extraction-aborts-instead-of-skipping.md, testing-zip-extraction-in-crate.md |
+| S002 | `oxeylyzer-resources/src/download.rs` | file | 2026-10-06 | 2026-10-06 | archive-path-containment.md, testing-zip-extraction-in-crate.md |
+| S003 | `https://docs.rs/crate/zip/2.4.2/source/src/types.rs` | url | 2026-10-06 | 2026-10-06 | archive-path-containment.md |
