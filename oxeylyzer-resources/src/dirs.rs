@@ -2,7 +2,11 @@ use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
 
-use crate::{ResourceError, download::DownloadProgress, seed};
+use crate::{
+    ResourceError,
+    download::{DATA_VERSION, DATA_VERSION_FILE, DownloadProgress},
+    seed,
+};
 
 /// Manages platform-appropriate paths for oxeylyzer configuration and data.
 ///
@@ -23,14 +27,71 @@ use crate::{ResourceError, download::DownloadProgress, seed};
 pub struct OxeylyzerDirs {
     config_root: PathBuf,
     data_root: PathBuf,
-    first_run: bool,
+}
+
+/// Whether an installation's data files match the version this build expects.
+///
+/// Distinguishes "never downloaded" from "downloaded, but behind" so callers can
+/// explain the difference rather than only reporting a yes/no.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataCurrency {
+    /// No version recorded — either a fresh installation or an unreadable sentinel.
+    Absent,
+    /// A version is recorded and it is older than the current one.
+    Stale { installed: String },
+    /// A version is recorded and it matches or exceeds the current one.
+    ///
+    /// A recorded version *newer* than current lands here too: the user downgraded
+    /// the app, and their data is still usable.
+    Current { installed: String },
+}
+
+impl DataCurrency {
+    /// Whether data must be downloaded.
+    pub fn needs_download(&self) -> bool {
+        !matches!(self, DataCurrency::Current { .. })
+    }
+}
+
+/// Orders two dot-separated versions, e.g. `"1.0.1" > "1.0.0"`.
+///
+/// A longer version is newer when the components it shares all match, so `"1.0"`
+/// is older than `"1.0.1"`. Returns `None` when either side is not a
+/// dot-separated list of numbers — callers treat that as "unknown", which for the
+/// installed version means download rather than assume currency.
+fn compare_versions(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let parse = |s: &str| -> Option<Vec<u64>> {
+        if s.is_empty() {
+            return None;
+        }
+        s.split('.')
+            .map(str::parse::<u64>)
+            .collect::<Result<Vec<u64>, _>>()
+            .ok()
+    };
+
+    let a = parse(a)?;
+    let b = parse(b)?;
+
+    for (x, y) in a.iter().zip(&b) {
+        match x.cmp(y) {
+            std::cmp::Ordering::Equal => continue,
+            other => return Some(other),
+        }
+    }
+    Some(a.len().cmp(&b.len()))
+}
+
+/// Reads the recorded data version from the data root.
+fn installed_version(data_root: &Path) -> Option<String> {
+    std::fs::read_to_string(data_root.join(DATA_VERSION_FILE))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 impl OxeylyzerDirs {
     /// Resolves platform directories and creates them if needed.
-    ///
-    /// `is_first_run()` returns `true` when data has never been downloaded
-    /// (the `.data-version` sentinel is absent from the data root).
     pub fn resolve() -> Result<Self, ResourceError> {
         let proj = ProjectDirs::from("", "", "oxeylyzer").ok_or(ResourceError::NoDirFound)?;
 
@@ -40,31 +101,38 @@ impl OxeylyzerDirs {
         std::fs::create_dir_all(&config_root)?;
         std::fs::create_dir_all(&data_root)?;
 
-        let first_run = !data_root.join(".data-version").exists();
-
         Ok(Self {
             config_root,
             data_root,
-            first_run,
         })
+    }
+
+    /// How current this installation's data files are.
+    pub fn data_currency(&self) -> DataCurrency {
+        let Some(installed) = installed_version(&self.data_root) else {
+            return DataCurrency::Absent;
+        };
+        match compare_versions(&installed, DATA_VERSION) {
+            Some(std::cmp::Ordering::Less) | None => DataCurrency::Stale { installed },
+            Some(_) => DataCurrency::Current { installed },
+        }
+    }
+
+    /// Whether data files must be downloaded — true when none are recorded or the
+    /// recorded version is behind [`DATA_VERSION`].
+    pub fn needs_data(&self) -> bool {
+        self.data_currency().needs_download()
     }
 
     /// Creates an `OxeylyzerDirs` pointing at a single override root.
     ///
     /// Both config and data resolve under the same directory — intended for
-    /// development (`OXEYLYZER_DATA_DIR=.`) and tests. `is_first_run()` is
-    /// always `false` so no download is triggered.
+    /// development (`OXEYLYZER_DATA_DIR=.`) and tests.
     pub fn with_override(root: PathBuf) -> Self {
         Self {
             config_root: root.clone(),
             data_root: root,
-            first_run: false,
         }
-    }
-
-    /// `true` if data files have never been downloaded (fresh install).
-    pub fn is_first_run(&self) -> bool {
-        self.first_run
     }
 
     // ── Data root (XDG_DATA_HOME) ────────────────────────────────────────────
@@ -135,5 +203,172 @@ impl OxeylyzerDirs {
         F: Fn(DownloadProgress) + Send + 'static,
     {
         seed::ensure_data(self, progress)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cmp::Ordering;
+
+    fn temp_root(label: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+        std::env::temp_dir().join(format!("oxeylyzer-{label}-{}-{n}", std::process::id()))
+    }
+
+    fn write_sentinel(root: &Path, contents: &str) {
+        std::fs::create_dir_all(root).unwrap();
+        std::fs::write(root.join(DATA_VERSION_FILE), contents).unwrap();
+    }
+
+    #[test]
+    fn older_patch_is_less() {
+        assert_eq!(compare_versions("1.0.0", "1.0.1"), Some(Ordering::Less));
+    }
+
+    #[test]
+    fn older_minor_is_less() {
+        assert_eq!(compare_versions("1.0.0", "1.1.0"), Some(Ordering::Less));
+    }
+
+    #[test]
+    fn fewer_components_is_less() {
+        assert_eq!(compare_versions("1.0", "1.0.1"), Some(Ordering::Less));
+    }
+
+    #[test]
+    fn equal_versions() {
+        assert_eq!(compare_versions("1.0.0", "1.0.0"), Some(Ordering::Equal));
+    }
+
+    #[test]
+    fn recorded_newer_than_current_is_greater() {
+        // User downgraded the app; their data must not be rolled back.
+        assert_eq!(compare_versions("2.0.0", "1.0.0"), Some(Ordering::Greater));
+    }
+
+    #[test]
+    fn unparseable_versions_compare_to_none() {
+        assert_eq!(compare_versions("abc", "1.0.0"), None);
+        assert_eq!(compare_versions("1.0.0", "abc"), None);
+        assert_eq!(compare_versions("", "1.0.0"), None);
+        assert_eq!(compare_versions("1..0", "1.0.0"), None);
+    }
+
+    #[test]
+    fn absent_sentinel_reports_absent_and_needs_download() {
+        let root = temp_root("absent");
+        let dirs = OxeylyzerDirs::with_override(root.clone());
+        assert_eq!(dirs.data_currency(), DataCurrency::Absent);
+        assert!(dirs.needs_data());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn empty_sentinel_counts_as_absent() {
+        let root = temp_root("empty");
+        write_sentinel(&root, "");
+        let dirs = OxeylyzerDirs::with_override(root.clone());
+        assert_eq!(dirs.data_currency(), DataCurrency::Absent);
+        assert!(dirs.needs_data());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn unreadable_sentinel_version_is_treated_as_stale() {
+        let root = temp_root("garbage");
+        write_sentinel(&root, "not-a-version");
+        let dirs = OxeylyzerDirs::with_override(root.clone());
+        assert_eq!(
+            dirs.data_currency(),
+            DataCurrency::Stale {
+                installed: "not-a-version".to_string()
+            }
+        );
+        assert!(dirs.needs_data());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn current_version_needs_no_download() {
+        let root = temp_root("current");
+        write_sentinel(&root, DATA_VERSION);
+        let dirs = OxeylyzerDirs::with_override(root.clone());
+        assert_eq!(
+            dirs.data_currency(),
+            DataCurrency::Current {
+                installed: DATA_VERSION.to_string()
+            }
+        );
+        assert!(!dirs.needs_data());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn stale_version_needs_download() {
+        let root = temp_root("stale");
+        write_sentinel(&root, "0.0.1");
+        let dirs = OxeylyzerDirs::with_override(root.clone());
+        assert!(matches!(dirs.data_currency(), DataCurrency::Stale { .. }));
+        assert!(dirs.needs_data());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn newer_recorded_version_needs_no_download() {
+        // Downgrade case: data is ahead of what this build expects, still usable.
+        let root = temp_root("newer");
+        write_sentinel(&root, "99.0.0");
+        let dirs = OxeylyzerDirs::with_override(root.clone());
+        assert_eq!(
+            dirs.data_currency(),
+            DataCurrency::Current {
+                installed: "99.0.0".to_string()
+            }
+        );
+        assert!(!dirs.needs_data());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn needs_download_matches_currency_variant() {
+        assert!(DataCurrency::Absent.needs_download());
+        assert!(
+            DataCurrency::Stale {
+                installed: "0.0.1".into()
+            }
+                .needs_download()
+        );
+        assert!(
+            !DataCurrency::Current {
+                installed: "1.0.0".into()
+            }
+                .needs_download()
+        );
+    }
+
+    #[test]
+    fn every_path_resolves_under_the_data_root() {
+        let root = temp_root("paths");
+        let dirs = OxeylyzerDirs::with_override(root.clone());
+        for path in [
+            dirs.layouts_dir(),
+            dirs.language_data_dir(),
+            dirs.corpus_configs_dir(),
+            dirs.text_dir(),
+            dirs.config_file(),
+            dirs.session_file(),
+            dirs.history_file(),
+            dirs.weight_presets_dir(),
+        ] {
+            assert!(
+                path.starts_with(&root),
+                "{} escaped the resolved root",
+                path.display()
+            );
+        }
+        std::fs::remove_dir_all(&root).ok();
     }
 }

@@ -1605,7 +1605,7 @@ pub fn run() {
             // On first run, download data files synchronously before initialising the
             // engine — corpus and layout files must exist before we try to load them.
             // Progress events are emitted so a frontend loading screen can react.
-            if dirs.is_first_run() {
+            if dirs.needs_data() {
                 use oxeylyzer_resources::DownloadProgress;
                 let app_handle = app.handle().clone();
                 dirs.ensure_data(move |p| {
