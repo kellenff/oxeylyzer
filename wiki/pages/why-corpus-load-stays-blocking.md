@@ -35,6 +35,7 @@ nowhere: every failure is blocking (S007).
 - **The command-line interface.** It reports errors on its own terms; the
   feature concerns the desktop app (S007).
 
-Related: [Desktop Startup Failure Reporting](./desktop-startup-failure-reporting.md) ·
+Related: [Corpus Cleaner Direction](./corpus-cleaner-direction.md) ·
+[Desktop Startup Failure Reporting](./desktop-startup-failure-reporting.md) ·
 [Data Version Currency](./data-version-currency.md) ·
 [Config Root And Data Root](./config-root-and-data-root.md)
