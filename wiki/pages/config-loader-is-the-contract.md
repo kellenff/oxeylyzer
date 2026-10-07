@@ -1,7 +1,7 @@
 ---
 title: The Config Loader Is The Contract
 type: decision
-sources: [S006]
+sources: [S004, S006]
 updated: 2026-10-06
 ---
 

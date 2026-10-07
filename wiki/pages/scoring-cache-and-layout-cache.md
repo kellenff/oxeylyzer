@@ -22,7 +22,7 @@ swap score" without touching the cache (S011). It:
 1. rejects early — `None` for same position, same character, or both characters
    having zero corpus frequency;
 2. swaps in memory, reads the resulting fingers `f1`/`f2`;
-3. recomputes the two affected fingers and adjusts the cached total:
+3. recomputes the two affected fingers and adjusts the cached total (S011):
    same-finger is `- cache.fspeed[f1] + recompute(f1)`, two-finger is
    `- cache.fspeed[f1] - cache.fspeed[f2] + recompute(f1) + recompute(f2)`;
    `usage` follows the same shape against `usage[10]`/`usage_total`;
@@ -36,14 +36,22 @@ recomputed by walking every key assigned to the finger — `finger_usage` sums
 `data.get_char_u` over `layout.usage_indices` — which is the redundant work this
 feature set out to remove (S010).
 
-> ⚠ conflict: T005 and SC-006 claim the misleading `TODO: optimize` was replaced
-> by documenting where the scoring cost actually sits (S010). The marker was
-> indeed removed, and the commit's prose explains it — but no replacement
-> comment exists at the cost site. `score_swap_cached`'s doc comment still reads
-> only "Scores a potential key swap using the cache", and the redundant
-> recompute at the `usage_score` binding is uncommented. The cost is documented in
-> the spec and plan, not in the code, so the next reader of `generate.rs` finds
-> nothing (S010, S011).
+> **Claim as recorded in the spec** (S010): T005 and SC-006 say the misleading
+> `TODO: optimize` was replaced by documenting where the scoring cost actually sits.
+> **Code, as ground truth** (S010, S011): the marker is gone — no `TODO: optimize`
+> remains anywhere in `oxeylyzer-core/src/` — and commit `410324f` did extract
+> `finger_usage_score` with a doc comment. But nothing at the cost site documents the
+> redundant recompute that remains. `score_swap_cached`'s doc comment
+> (`generate.rs:833`) still reads only "Scores a potential key swap using the cache",
+> and the `usage_score` binding (`generate.rs:873`) that calls `finger_usage` once per
+> affected finger carries no comment.
+>
+> ✔ **resolved** (2026-10-06, code as ground truth): the removal half of SC-006 is
+> true; the "documented where it actually sits" half is not, so the spec wording is
+> corrected rather than treated as a gap in the code. The cost is recorded in the spec
+> and plan, not in source, so a reader of `generate.rs` finds nothing. If the redundancy
+> is ever exploited, or a comment is added there, the spec wording becomes true again
+> and no further change is needed here.
 
 ## `accept_swap` is the only mutator
 

@@ -43,8 +43,10 @@ and the only way to measure what caching bought (S010).
 > permit.
 
 The asymmetry to remember: the module is called *obsolete* because the cached
-path is the production path, not because the file is retired. Deleting it also
-requires renaming whatever "obsolete" was meant to say.
+path is the production path, not because the file is retired — `mod obsolete;`
+(`generate.rs:1119`) is unconditional, and production reaches `score_swap_cached`
+and `best_swap_cached` while `obsolete.rs` holds the uncached twins (S010, S011).
+Deleting it also requires renaming whatever "obsolete" was meant to say.
 
 Related: [Scoring Cache And LayoutCache](./scoring-cache-and-layout-cache.md) ·
 [Exact-Integer Scoring Is An Invariant](./exact-integer-scoring-is-an-invariant.md) ·

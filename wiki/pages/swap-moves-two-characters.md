@@ -10,7 +10,7 @@ board. So after a swap **only the two fingers holding the swapped keys can have
 changed usage** — every other finger's key set is untouched (S010).
 
 That makes each affected finger's post-swap usage derivable from its cached
-value in O(1):
+value in O(1) (S010):
 
 ```
 new_usage(f) = cached_usage(f) - freq(char leaving f) + freq(char arriving f)

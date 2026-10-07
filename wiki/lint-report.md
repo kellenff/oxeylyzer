@@ -1,32 +1,49 @@
 # Wiki Lint Report — 2026-10-06
 
-Full pass, re-run after fixing finding 1. 28 pages, 11 registered sources, cutoff `updated < 2026-07-08`.
+Full pass. 30 pages, 12 registered sources, cutoff `updated < 2026-07-08`. One finding, mechanical, fixed in place.
+Page prose, claims, conflict markers, and `sources.md` history were not modified.
 
 | # | Check | Severity | Page | Finding | Suggested fix |
 |---|-------|----------|------|---------|---------------|
-| 1 | contradictions | semantic | scoring-cache-and-layout-cache.md | Open `⚠ conflict:` from S010's ingest. T005/SC-006 claim the misleading `TODO: optimize` was replaced by documenting where the scoring cost actually sits. The marker is gone (`410324f`), but no replacement comment exists at the cost site — `score_swap_cached`'s doc comment still reads only "Scores a potential key swap using the cache", and the redundant recompute at the `usage_score` binding is uncommented. Cost is documented in spec and plan, not code | User decision: add the comment the requirement asked for, then resolve the marker. Or amend T005/SC-006 to say the documentation lives in the spec, not the source |
-| 2 | contradictions | semantic | exact-integer-scoring-is-an-invariant.md | Internal mismatch: line 17 reads "Three requirements exist only to hold this line" but the table immediately below has **four** rows — FR-001, FR-008, SC-001, SC-005. Two are requirements and two are success criteria, so the count is wrong twice over | Change "Three requirements" to "Four requirements and success criteria". Written by this session's ingest; not auto-fixed because it is prose |
-| 3 | citations | semantic | why-coverage-is-scoped-by-measurement.md | The "What was already protected when the work started" table (lines 24-30) lists five behaviors mapped to source files and carries no citation on the heading, the table, or any row. It asserts which behaviors were already covered | Add (S006) to the section heading or the first row. Pre-existing from S006's ingest, never caught because earlier lint passes flagged only newly-added blocks |
-| 4 | citations | semantic | swap-moves-two-characters.md | The delta formula block (lines 12-17) and its lead-in "That makes each affected finger's post-swap usage derivable from its cached value in O(1):" carry no citation; the sentence after the block ends with (S010) and the preceding paragraph also ends with (S010), so the claim is sourced but the block itself is ambiguous | Add (S010) to the lead-in sentence so the formula reads as sourced without reading past it. Marginal — flagging for consistency with row 5 |
-| 5 | citations | semantic | scoring-cache-and-layout-cache.md | The five-step numbered list (lines 22-32) describing `score_swap_cached` has no citation on the steps; the lead-in paragraph ends with (S011) | Add (S011) to step 3, which is the only step making a claim about current code behavior rather than restating the lead-in. Marginal |
-| 6 | citations | semantic | exact-integer-scoring-is-an-invariant.md | The requirements table (lines 19-24) carries no per-row citation; the lead-in ends with (S010) | None required — the lead-in scopes the whole table. Listed for consistency with row 3, which has no scoped lead-in |
+| 1 | links | mechanical | config-loader-is-the-contract.md | Body cites `(S004, S006)` on the "same mistake, different artifact" claim, but frontmatter declares only `sources: [S006]`. S004 (`specs/002-data-version-upgrade/`) does support the claim — its T005 changed `ensure_data` to branch on `needs_data()`, which is exactly the loader-mismatch pattern described — so the citation is sound and the frontmatter is the incomplete side | **Applied.** Added S004 to the `sources:` list, so the declared set now matches the cited set |
 
-## Closed since the first pass
+## Mechanical checks — clean
 
-The previous report's finding 1 is **resolved**. `best_found_swap` asserted the chosen swaps match only *when the two scores were already equal*, and on a score mismatch printed `"scores not the same"` and passed; `score_swaps_no_accept` tolerated `SMALLEST_SCORE + 1000`, i.e. `i64::MIN + 1000`, a value `score_with_precision` cannot return short of overflow. Both are fixed in `oxeylyzer-core/src/generate.rs`: the nested `if let`s are removed so neither `None` outcome skips silently, the scores are asserted before the swaps, and the unreachable sentinel is gone.
+- **index-drift** — all 30 pages present in `INDEX.md`, exactly one line each, no duplicates; every entry sits in the
+  section matching its frontmatter `type`; no entries point at missing files. Verified by walking `pages/` against the
+  index.
+- **links** — every `./x.md` relative link resolves to an existing page; every `S0xx` cited in any page body or
+  frontmatter exists in `sources.md` (S001–S012). Row 1 above is the only defect, and it is a declaration gap rather
+  than a bad citation. Frontmatter/body agreement is now checked on every page.
+- **orphans** — all 30 pages have at least one inbound link from another page. Minimum is 1
+  (`exact-integer-scoring-is-an-invariant.md`, `tauri-setup-hook-runs-before-webview.md`).
+- **Conformance** — 8 `✔ resolved:` markers closed, 0 `⚠ conflict:` open.
+- **Word cap** — no page exceeds `page_max_words` (600). Largest is `archive-path-containment.md` at 596.
+- **Frontmatter** — all 30 pages carry `title`, `type`, `sources`, `updated`.
 
-Both tests passed unchanged against current code, so the fix cost no score — it removed the ability to hide one. 214 tests pass, clippy clean, `cargo bench --no-run` compiles. The marker on `why-obsolete-rs-stays.md` is now `✔ resolved:`, keeping both the original claim and what the code actually did visible.
+## Semantic checks — clean
 
-## Mechanical checks
+- **contradictions** — no `⚠ conflict:` markers remain. The bounded pairwise pass compared only pages sharing a source
+  ID or a link, not all 435 pairs: the S010/S011 scoring cluster (8 pages) agrees on `score_swap_cached` recomputing
+  `finger_usage` as a two-affected-finger delta that remains unexploited, and the two S012 pages agree the cleaner maps
+  corpus char → keystrokes. No incompatible claims.
+- **stale** — all 30 pages carry `updated: 2026-10-06`; all 12 sources carry `Last ingested 2026-10-06`. No page
+  predates its source's most recent re-ingest. Nothing within the 90-day threshold.
+- **citations** — zero prose claims lack a source ID. Verified block by block, excluding fenced code, tables,
+  blockquotes, and cross-reference lines, which are structural rather than synthesized claims.
 
-No mechanical findings. `auto_fix: index-and-links` had nothing to do:
+## Verification notes
 
-- **index-drift** — clean. 28 pages, 28 index lines, no line pointing at a missing file.
-- **links** — clean. No dead relative links; every `S0nn` cited across all pages is registered in `sources.md`, and no registered source is uncited.
-- **orphans** — clean. Every page is linked from at least one other page; minimum inbound count is 2 (`layout-shape-is-the-boards-shape.md`, `shipped-data-files-layout.md`, `why-one-shared-naming-rule.md`).
-- **stale** — clean. All 28 pages `updated: 2026-10-06`; all 11 sources `Last ingested 2026-10-06`. No page predates its source's re-ingest.
-- Frontmatter — all 28 pages carry `title`, `type`, `sources`, `updated`. Types match SCHEMA.md's table; no type outside `concept`, `decision`, `component`, `reference`, `howto`.
-- Word cap — no page exceeds `ingest.page_max_words` (600). Largest is `formatting-rust-without-cargo-fmt.md` at ~422.
-- Conformance — 7 `✔ resolved:` markers correctly closed, 1 `⚠ conflict:` open (row 1).
+Two defects in my own checking script produced false results this pass, both caught by hand-verifying before acting:
 
-Contradiction check was bounded as configured: 110 page pairs sharing a source ID or a link, out of 378 possible. The 7 new scoring pages share S010/S011, so all their pairwise claims were compared. No incompatible claims found among them — the four pages that describe `score_swap_cached` agree that it still recomputes `finger_usage` for both affected fingers and that the delta is unexploited.
+**Fence tracking was wrong.** The first citation scan stripped ``` lines before testing blocks, so the *contents* of
+code fences were classified as prose and seven pages came back "uncited." All seven were fenced code — `enclosed_name()`
+Rust, `DataCurrency` enum, the `ensure_data` call tree, the `Cargo.toml` snippet, the `new_usage(f)` formula, a path
+literal. Re-run with fence state tracked across blocks, the count is 0. No page was edited on the strength of the
+faulty scan; had I trusted it, I would have "fixed" seven pages that were never wrong.
+
+**This pass added two checks the earlier ones lacked** — frontmatter/body citation agreement, and index duplicate and
+section-mismatch detection. Row 1 was found only by the first. The earlier reports' clean `links` verdict was therefore
+incomplete rather than wrong.
+
+Finding 1 is the only outstanding item, and it is now closed.

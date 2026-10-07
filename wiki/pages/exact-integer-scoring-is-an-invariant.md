@@ -14,7 +14,8 @@ So **"identical scores" means bit-for-bit equal, not approximately equal**
 layouts users are shown and which get saved: a different product, delivered
 silently (S010).
 
-Three requirements exist only to hold this line (S010):
+Four requirements exist only to hold this line — two functional requirements and two
+success criteria (S010):
 
 | ID | Requires |
 |---|---|
