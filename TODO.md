@@ -77,8 +77,9 @@ comment's wording rather than from the code.
 
 ## A single `..` after the archive prefix escapes the data directory
 
-**Status**: confirmed bug, not yet fixed
-**Where**: `oxeylyzer-resources/src/download.rs:90-103`
+**Status**: fixed 2026-10-10 — see
+`.specify/bugs/archive-prefix-double-dot-escape/` (assessment, fix, verification).
+**Where**: `oxeylyzer-resources/src/download.rs:90-103` (pre-fix lines)
 
 The extraction loop checks containment and strips the prefix in the wrong order.
 `zip` 2.4.2's `enclosed_name()` counts components with a depth counter
@@ -124,28 +125,36 @@ it never demonstrates the hazard it warns about.
 ### The spec already had this right
 
 `specs/001-archive-safety/plan.md` prescribes strip-then-check, with the depth
-mechanism explained. `tasks.md` T002 prescribes the opposite ("strip
+mechanism explained. `tasks.md` T002 prescribed the opposite ("strip
 `ZIP_INNER_PREFIX` from the *enclosed* path, after the containment check"), and the
-implementation followed T002. Worth noting before anyone re-reads the spec: T002 is
-wrong, and the plan is the correct reading.
+implementation followed T002. Worth noting before anyone re-reads the spec: T002 was
+wrong, and the plan is the correct reading. **T002 has since been corrected**
+(2026-10-10), so the artifact no longer prescribes the buggy order.
 
 ### To fix
 
-1. Strip `ZIP_INNER_PREFIX` from the entry name *before* validating, then validate
-   the remainder. `enclosed_name()` takes no subpath argument, so this means either
-   a second `ZipFile` over the same entry or an inline component walk with the
-   same depth rule — hand-rolling the walk is what `plan.md` rejected in favor of
-   the library, but the library cannot express this particular check.
-2. Correct the in-code comment to match whichever order lands, and fix the
-   example — use a single `..` or the comment keeps not demonstrating anything.
-3. Add the single-`..` case as a test asserting on the filesystem, not the return
-   value. This is the test whose absence let the ordering bug through; the existing
-   mutation check in `tasks.md` proves the guard is load-bearing only for the shapes
-   it exercises.
-4. Correct `tasks.md` T002 in a separate change — spec artifacts are immutable to
-   the wiki ingest command, so it has to be done deliberately.
+**Done 2026-10-10** (all four items; details in `.specify/bugs/archive-prefix-double-dot-escape/fix.md`):
+
+1. ~~Strip `ZIP_INNER_PREFIX` from the entry name *before* validating, then validate
+   the remainder.~~ Done by keeping `enclosed_name()` for NUL/absolute/drive
+   rejection and adding a depth check on the stripped remainder. The fix did not
+   need a second `ZipFile` or a full standalone rewrite; `is_contained` applies
+   only the remainder check.
+2. ~~Correct the in-code comment~~ Done — the comment now matches the code and
+   uses a single `..` example.
+3. ~~Add the single-`..` case as a test asserting on the filesystem~~ Done, plus
+   padded, sideways, and doubled-separator variants. The doubled-separator test
+   covers a case the assessment missed: `//` after the prefix left a *rooted*
+   remainder, so the old order also allowed absolute writes.
+4. ~~Correct `tasks.md` T002~~ Done in the same change, with a correction note.
+
+Extra finding from the fix: the escape was bounded to one level above `dest` per
+entry, not "anywhere the user can write", but a second separator made it an
+absolute-path write.
 
 ### Wiki record
 
-`wiki/pages/archive-path-containment.md` (sources S002, S003). Re-ingesting that
-source before the fix lands will re-record the breach as current.
+`wiki/pages/archive-path-containment.md` (sources S002, S003). **Stale as of
+2026-10-10**: it still records the breach as live and describes the shipped order
+as vulnerable. Re-ingest now that the fix has landed, or the page will keep
+teaching the pre-fix behavior.

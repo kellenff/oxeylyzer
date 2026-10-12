@@ -8,8 +8,13 @@
       loop of `oxeylyzer-resources/src/download.rs`, mapping `None` to a
       `ResourceError::Extraction` error that names the offending entry (FR-001,
       FR-002, FR-003)
-- [x] **T002** Strip `ZIP_INNER_PREFIX` from the *enclosed* path, after the
-      containment check — not from the raw name before it (FR-004)
+- [x] **T002** Strip `ZIP_INNER_PREFIX` from the entry name and validate the
+      *remainder* against the containment rule — the prefix banks one level of
+      depth, so checking the whole enclosed name accepts
+      `data-files/../escaped.txt` (FR-004). **Corrected 2026-10-10**: this task
+      originally prescribed the opposite order ("strip from the *enclosed* path,
+      after the containment check"), which was the bug; see the correction note
+      below.
 - [x] **T003** Preserve the `stripped.is_empty()` early-continue for the
       archive's own root entry (FR-004)
 - [x] **T004** Confirm no new `ResourceError` variant is needed —
@@ -71,6 +76,21 @@ All tasks done. Two deviations from the task list, both forced by the code:
 `mixed_valid_and_hostile_fails_without_partial_files` fail, while the four
 positive-path tests keep passing. The security tests are proven to actually
 detect the vulnerability, not merely pass.
+
+**T002 corrected 2026-10-10.** The original T002 prescribed the ordering that
+caused a path-traversal bug: it said to strip `ZIP_INNER_PREFIX` from the
+*enclosed* path, after the containment check. That whole-name check lets the
+prefix bank one level of depth, which a single `..` then spends, so
+`data-files/../escaped.txt` was accepted and written one level above the data
+root. The mutation check above passed only because every traversal test used two
+or three `..`, shapes the wrong order rejects anyway. The ordering prescribed by
+`plan.md` ("strip before checking") was always the correct reading; T002 was
+wrong. Fixed in `oxeylyzer-resources/src/download.rs` by validating the stripped
+remainder with the same depth rule, and covered by the new single-`..`,
+padded, sideways, and doubled-separator tests. See
+`.specify/bugs/archive-prefix-double-dot-escape/` for the assessment, fix, and
+verification reports. Do not re-introduce the "strip after the check" wording:
+re-ingesting this artifact would otherwise record the breach as current.
 
 The first version of `absolute_path_entry_is_rejected` used `/etc/passwd` as the
 target and passed even against vulnerable code — the write failed on
