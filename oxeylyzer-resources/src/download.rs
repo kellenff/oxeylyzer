@@ -1,5 +1,5 @@
 use std::io::Read;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use crate::ResourceError;
 
@@ -68,6 +68,28 @@ where
     Ok(())
 }
 
+/// Whether a relative entry path stays at or below its own root.
+///
+/// Same rule as [`zip::read::ZipFile::enclosed_name`] — which the extraction loop
+/// already applies to the raw name — but callable on the *remainder* left after
+/// [`ZIP_INNER_PREFIX`] is stripped. Validating the whole name lets the prefix bank
+/// one level of depth, which a single `../` then spends to escape the destination.
+fn is_contained(rel: &str) -> bool {
+    let mut depth = 0usize;
+    for component in Path::new(rel).components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => return false,
+            Component::ParentDir => match depth.checked_sub(1) {
+                Some(next) => depth = next,
+                None => return false,
+            },
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+        }
+    }
+    true
+}
+
 /// Unpacks a zip archive into `dest`, refusing any entry that would land outside it.
 ///
 /// Kept separate from the download so the containment rules can be exercised
@@ -82,22 +104,24 @@ fn extract_bytes(body: &[u8], dest: &Path) -> Result<(), ResourceError> {
             .by_index(i)
             .map_err(|e| ResourceError::Extraction(e.to_string()))?;
 
-        // `enclosed_name` rejects NUL bytes, absolute paths, drive prefixes, and any
-        // `..` that would climb out of the archive root. The prefix is stripped only
-        // afterwards: the raw name's own directory component supplies the depth that a
-        // following `../..` would consume, so validating the whole name first would let
-        // `oxeylyzer-data-files/../../etc/passwd` through.
-        let enclosed = file.enclosed_name().ok_or_else(|| {
-            ResourceError::Extraction(format!(
-                "archive entry escapes destination: {}",
-                file.name()
-            ))
-        })?;
+        // `enclosed_name` rejects NUL bytes, absolute paths, and drive prefixes, and
+        // any `..` that would climb out of the archive root. It counts components
+        // against a depth counter, so the `oxeylyzer-data-files/` prefix banks one
+        // level of depth — exactly what one `../` after the prefix spends. The prefix
+        // must be stripped first and the remainder checked against the same rule;
+        // validating the whole name would accept `oxeylyzer-data-files/../escaped.txt`.
+        let escapes = |name: &str| {
+            ResourceError::Extraction(format!("archive entry escapes destination: {name}"))
+        };
+        let enclosed = file.enclosed_name().ok_or_else(|| escapes(file.name()))?;
 
         let raw_name = enclosed.to_string_lossy();
         let stripped = raw_name.strip_prefix(ZIP_INNER_PREFIX).unwrap_or(&raw_name);
         if stripped.is_empty() {
             continue;
+        }
+        if !is_contained(stripped) {
+            return Err(escapes(file.name()));
         }
 
         let out_path = dest.join(stripped);
@@ -168,6 +192,14 @@ mod tests {
         found
     }
 
+    /// Relative paths of files under `root` that landed outside `dest` (`root/data`).
+    fn files_outside(root: &Path) -> Vec<String> {
+        files_under(root)
+            .into_iter()
+            .filter(|path| !path.starts_with("data/"))
+            .collect()
+    }
+
     fn walk(base: &Path, dir: &Path, out: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
@@ -183,14 +215,70 @@ mod tests {
     }
 
     #[test]
+    fn files_outside_reports_everything_outside_the_destination() {
+        let (root, _, _) = extract(&[("oxeylyzer-data-files/a.txt", "inside")]);
+        // Extraction succeeded and only `data/a.txt` should exist.
+        assert_eq!(files_outside(&root), Vec::<String>::new());
+
+        std::fs::write(root.join("planted.txt"), "outside").unwrap();
+        std::fs::create_dir_all(root.join("someotherapp")).unwrap();
+        std::fs::write(root.join("someotherapp/payload.txt"), "outside").unwrap();
+
+        let mut expected = vec![
+            "planted.txt".to_string(),
+            "someotherapp/payload.txt".to_string(),
+        ];
+        expected.sort();
+        assert_eq!(files_outside(&root), expected);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn traversal_escaping_root_is_rejected() {
-        let (root, dest, ok) = extract(&[("oxeylyzer-data-files/../../../escaped.txt", "pwned")]);
+        let (root, _, ok) = extract(&[("oxeylyzer-data-files/../../../escaped.txt", "pwned")]);
         assert!(!ok, "traversal entry must not extract");
-        assert!(
-            !root.parent().unwrap().join("escaped.txt").exists(),
+        assert_eq!(
+            files_outside(&root),
+            Vec::<String>::new(),
             "file was written outside the destination"
         );
-        assert!(!dest.join("escaped.txt").exists());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Single `..` after the prefix is the shape the shipped order let through: the
+    /// prefix banks one level of depth, which one `..` then spends. This is the
+    /// regression test for the ordering bug — it must land at `dest/../escaped.txt`.
+    #[test]
+    fn single_parent_after_prefix_is_rejected() {
+        let (root, _, ok) = extract(&[("oxeylyzer-data-files/../escaped.txt", "pwned")]);
+        assert!(!ok, "single `..` after the prefix must not extract");
+        assert_eq!(
+            files_outside(&root),
+            Vec::<String>::new(),
+            "file was written one level above the destination"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn padded_single_parent_after_prefix_is_rejected() {
+        let (root, _, ok) = extract(&[("oxeylyzer-data-files/a/b/../../../escaped.txt", "pwned")]);
+        assert!(
+            !ok,
+            "padding with in-bounds segments must not launder a `..`"
+        );
+        assert_eq!(files_outside(&root), Vec::<String>::new());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn sideways_write_above_the_destination_is_rejected() {
+        let (root, _, ok) = extract(&[(
+            "oxeylyzer-data-files/../someotherapp/evil/payload.txt",
+            "pwned",
+        )]);
+        assert!(!ok, "sibling of the data root must not be writable");
+        assert_eq!(files_outside(&root), Vec::<String>::new());
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -215,6 +303,32 @@ mod tests {
         assert!(
             !outside.exists(),
             "absolute entry was written to its literal path"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A second `/` after the prefix survives `enclosed_name()` (its component walk
+    /// collapses repeated separators) but leaves a *rooted* remainder once the prefix
+    /// is stripped, so `dest.join` discards `dest` and writes to the literal path.
+    /// This is the absolute-path variant of the same ordering bug.
+    #[test]
+    fn doubled_separator_after_prefix_is_rejected() {
+        let root = std::env::temp_dir().join(format!(
+            "oxeylyzer-double-{}-{}",
+            std::process::id(),
+            next_id()
+        ));
+        let dest = root.join("data");
+        std::fs::create_dir_all(&dest).unwrap();
+        let outside = root.join("absolute-escape.txt");
+
+        let entry = format!("{ZIP_INNER_PREFIX}{}", outside.to_str().unwrap());
+        let result = extract_bytes(&archive(&[(entry.as_str(), "pwned")]), &dest);
+
+        assert!(result.is_err(), "rooted remainder must not extract");
+        assert!(
+            !outside.exists(),
+            "rooted remainder was written to its literal path"
         );
         std::fs::remove_dir_all(&root).ok();
     }
