@@ -495,9 +495,11 @@ impl Oxeylyzer {
         freqs
     }
 
-    /// Calculates the total score for a given layout.
+    /// The search objective for a given layout: stretch included, trigrams truncated at
+    /// `self.trigram_precision`, identical to `initialize_cache(layout).total_score()` —
+    /// the standard the optimizer maximizes and every ranking surface must sort by.
     ///
-    /// Higher scores generally indicate better layouts according to the weights.
+    /// Higher scores indicate better layouts according to the weights.
     ///
     /// # Examples:
     /// ```
@@ -516,15 +518,7 @@ impl Oxeylyzer {
         #[cfg(test)]
         ANALYZED_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        let fspeed_usage = Finger::FINGERS
-            .into_iter()
-            .map(|f| self.finger_usage(layout, f) + self.finger_fspeed(layout, f))
-            .sum::<i64>();
-
-        let pinky_ring = self.pinky_ring_score(layout);
-        let trigram_score = self.trigram_score_iter(layout, self.data.gen_trigrams());
-
-        trigram_score + fspeed_usage + pinky_ring
+        self.score_with_precision(layout, self.trigram_precision)
     }
 
     /// Calculates the total score for a given layout.
@@ -1246,6 +1240,38 @@ mod tests {
             );
             assert_eq!(Some(cache.total_score()), accepted_score);
             assert_eq!(GEN.initialize_cache(&qwerty), cache);
+        }
+    }
+
+    /// The displayed ranking standard must stay the search standard. `score()` once summed a
+    /// different formula — no stretch term and every trigram instead of the configured
+    /// precision — so the top-10 shown to a user was not the top-10 the optimizer produced.
+    /// Pins the identity on a fixed layout and after every swap of a sequence, so neither
+    /// standard can drift without failing here.
+    #[test]
+    fn score_matches_search_objective() {
+        assert_eq!(
+            GEN.score(&QWERTY),
+            GEN.initialize_cache(&QWERTY).total_score(),
+            "score() must equal the search objective",
+        );
+        assert_eq!(
+            GEN.score(&QWERTY),
+            GEN.score_with_precision(&QWERTY, GEN.trigram_precision),
+        );
+
+        let mut layout = QWERTY.clone();
+        let mut cache = GEN.initialize_cache(&layout);
+
+        for swap in QWERTY.possible_swaps.iter().take(200) {
+            GEN.accept_swap(&mut layout, swap, &mut cache);
+
+            assert_eq!(
+                GEN.score(&layout),
+                cache.total_score(),
+                "identity must hold after swap {:?}",
+                swap,
+            );
         }
     }
 
