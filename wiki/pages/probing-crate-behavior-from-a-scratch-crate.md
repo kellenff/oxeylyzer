@@ -1,8 +1,8 @@
 ---
 title: Probing Crate Behavior From A Scratch Crate
 type: howto
-sources: [S012]
-updated: 2026-10-06
+sources: [S012, S013]
+updated: 2026-10-13
 ---
 
 When a question is "what does this API *actually* do" rather than "what does the code
@@ -56,6 +56,12 @@ behavior is what both sides already agree on (S012).
 - Where the crate is already tested, read those tests first — the shipped assertion is
   cheaper than a probe and is what CI actually enforces (S012).
 
+Where the crate is already tested, read those tests first (S012). When the question is
+off the probe path — does a *fix* remove the symptom — go one step further and diff the
+pre-fix and post-fix outputs; see
+[A/B A Fix With Worktrees And A Scratch Binary](./ab-fix-with-worktrees.md).
+
 Related: [Corpus Cleaner Direction](./corpus-cleaner-direction.md) ·
+[A/B A Fix With Worktrees And A Scratch Binary](./ab-fix-with-worktrees.md) ·
 [Why Coverage Is Scoped By Measurement](./why-coverage-is-scoped-by-measurement.md) ·
 [Testing Zip Extraction In-Crate](./testing-zip-extraction-in-crate.md)

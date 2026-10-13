@@ -11,6 +11,7 @@ page files, not here.
 - [Layout Row Separator Convention](./pages/layout-row-separator-convention.md) — row gaps are the layout's, not the editor's; hand-alternated layouts use double spaces
 - [Exact-Integer Scoring Is An Invariant](./pages/exact-integer-scoring-is-an-invariant.md) — scores compare as `i64`, so "identical" is bit-for-bit; a one-unit shift silently changes which layouts are saved
 - [Swap Moves Two Characters](./pages/swap-moves-two-characters.md) — only two fingers' usage can change per swap, making each derivable from its cached value by a two-term delta
+- [One Scoring Standard](./pages/one-scoring-standard.md) — the search objective is `cache.total_score()`; `score()` forwards to it so ranking matches search, while `analyze` keeps `usize::MAX`
 
 
 ## decision
@@ -45,3 +46,4 @@ page files, not here.
 - [Testing Zip Extraction In-Crate](./pages/testing-zip-extraction-in-crate.md) — `ZipWriter` over a `Cursor`, assert on the filesystem, panic-callback to prove no download
 - [Formatting Rust Without cargo fmt](./pages/formatting-rust-without-cargo-fmt.md) — `cargo fmt` cannot load `librustc_driver` here; use the IDE reformat action and revert churn
 - [Probing Crate Behavior From A Scratch Crate](./pages/probing-crate-behavior-from-a-scratch-crate.md) — a throwaway path-dependency crate to settle disputed API direction; probe the *expected* behavior, not the agreed one
+- [A/B A Fix With Worktrees And A Scratch Binary](./pages/ab-fix-with-worktrees.md) — build the reproducer twice (pre/post) in throwaway worktrees and splice the new test into the pre-fix tree to prove it is pinned

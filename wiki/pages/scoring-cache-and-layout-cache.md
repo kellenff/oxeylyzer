@@ -1,8 +1,8 @@
 ---
 title: Scoring Cache And LayoutCache
 type: component
-sources: [S010, S011]
-updated: 2026-10-06
+sources: [S010, S011, S013]
+updated: 2026-10-13
 ---
 
 `LayoutCache` holds the seven totals scoring needs, all `i64`: `usage[10]` and
@@ -61,10 +61,20 @@ asserts the layout is byte-identical to its pre-swap clone after a full sweep of
 `possible_swaps` (S011). See
 [Why Scoring Does Not Mutate The Cache](./why-scoring-does-not-mutate-the-cache.md).
 
+## What the cached total *is*
+
+`total_score()` is the search objective, and `Oxeylyzer::score()` — the function
+every ranking surface sorts by — forwards to the same standard (S013). The two
+are equal by construction, pinned by `score_matches_search_objective` on QWERTY
+and after each of 200 accepted swaps (S013). `analyze`'s report is the one
+surface on a different standard (`usize::MAX`, every trigram); see
+[One Scoring Standard](./one-scoring-standard.md) (S013).
+
 ## Same structural pattern everywhere
 
 `score_swap_cached` is the only caller of the swap-scoring entry point in
 production: `ils.rs`, `lahc.rs`, and `depth.rs` all call it (S011).
 
 Related: [Swap Moves Two Characters](./swap-moves-two-characters.md) ·
-[Why obsolete.rs Stays](./why-obsolete-rs-stays.md)
+[Why obsolete.rs Stays](./why-obsolete-rs-stays.md) ·
+[One Scoring Standard](./one-scoring-standard.md)
