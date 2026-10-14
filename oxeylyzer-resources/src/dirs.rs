@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use directories::ProjectDirs;
 
 use crate::{
-    download::{DownloadProgress, DATA_VERSION, DATA_VERSION_FILE},
-    seed, ResourceError,
+    ResourceError,
+    download::{DATA_VERSION, DATA_VERSION_FILE, DownloadProgress},
+    seed,
 };
 
 /// Manages platform-appropriate paths for oxeylyzer configuration and data.
@@ -347,14 +348,18 @@ mod tests {
     #[test]
     fn needs_download_matches_currency_variant() {
         assert!(DataCurrency::Absent.needs_download());
-        assert!(DataCurrency::Stale {
-            installed: "0.0.1".into()
-        }
-            .needs_download());
-        assert!(!DataCurrency::Current {
-            installed: "1.0.0".into()
-        }
-            .needs_download());
+        assert!(
+            DataCurrency::Stale {
+                installed: "0.0.1".into()
+            }
+            .needs_download()
+        );
+        assert!(
+            !DataCurrency::Current {
+                installed: "1.0.0".into()
+            }
+            .needs_download()
+        );
     }
 
     #[test]

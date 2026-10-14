@@ -1241,8 +1241,9 @@ fn save_layout_edit(
     // intact; delete-then-write would risk losing the layout.
     std::fs::write(&new_path, &json).map_err(|e| format!("Write failed: {e}"))?;
     if is_rename {
-        std::fs::remove_file(&original_path)
-            .map_err(|e| format!("Saved as \"{new_name}\" but could not remove the old file: {e}"))?;
+        std::fs::remove_file(&original_path).map_err(|e| {
+            format!("Saved as \"{new_name}\" but could not remove the old file: {e}")
+        })?;
     }
 
     let layout_loaded = Layout::load(&new_path).map_err(|e| e.to_string())?;
@@ -1688,13 +1689,13 @@ fn initialize(
             }
             let _ = emit_handle.emit("download-progress", payload);
         })
-            .map_err(|e| {
-                format!(
-                    "Could not download the built-in data files. Oxeylyzer needs them for \
+        .map_err(|e| {
+            format!(
+                "Could not download the built-in data files. Oxeylyzer needs them for \
                  layouts and language data — check your network connection and try \
                  again. {e}"
-                )
-            })?;
+            )
+        })?;
     }
 
     // Idempotent; ensure_data already calls it on first run, but calling it here means
@@ -1703,8 +1704,12 @@ fn initialize(
     dirs.ensure_config()
         .map_err(|e| format!("Could not write {}. {e}", config_file.display()))?;
 
-    let config = Config::with_loaded_weights(&config_file)
-        .map_err(|e| format!("Could not parse {}. Fix or delete it to start over. {e}", config_file.display()))?;
+    let config = Config::with_loaded_weights(&config_file).map_err(|e| {
+        format!(
+            "Could not parse {}. Fix or delete it to start over. {e}",
+            config_file.display()
+        )
+    })?;
 
     let corpus_path = dirs.data_dir().join(&config.corpus);
     let data = Data::load(&corpus_path).map_err(|e| {

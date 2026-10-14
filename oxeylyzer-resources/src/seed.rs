@@ -1,8 +1,8 @@
 use oxeylyzer_core::weights::Config;
 
 use crate::{
-    download::{download_and_extract, DownloadProgress},
     OxeylyzerDirs, ResourceError,
+    download::{DownloadProgress, download_and_extract},
 };
 
 pub fn ensure_data<F>(dirs: &OxeylyzerDirs, progress: F) -> Result<(), ResourceError>

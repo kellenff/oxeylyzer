@@ -237,7 +237,7 @@ impl Oxeylyzer {
     /// assert_eq!(oxeylyzer.language, "");
     /// ```
     pub fn new(data: Data, config: Config) -> Self
-    where {
+where {
         let data = AnalyzerData::new(data, &config.weights);
 
         Self {
@@ -721,7 +721,6 @@ impl Oxeylyzer {
 
         self.finger_usage_score(finger, usage)
     }
-
 
     /// Computes the same-finger bigram penalty for a pair.
     pub fn pair_sfb(&self, layout: &FastLayout, bigram_pair: &BigramPair) -> i64 {
@@ -1292,22 +1291,22 @@ mod tests {
             // The expression as it was written inline before being extracted.
             let original = GEN.weights.max_finger_use.penalty
                 * match finger {
-                Finger::LP | Finger::RP => {
-                    usage - GEN.weights.max_finger_use.pinky * GEN.data.char_total / 100
-                }
-                Finger::LR | Finger::RR => {
-                    usage - GEN.weights.max_finger_use.ring * GEN.data.char_total / 100
-                }
-                Finger::LM | Finger::RM => {
-                    usage - GEN.weights.max_finger_use.middle * GEN.data.char_total / 100
-                }
-                Finger::LI | Finger::RI => {
-                    usage - GEN.weights.max_finger_use.index * GEN.data.char_total / 100
-                }
-                Finger::LT | Finger::RT => {
-                    usage - GEN.weights.max_finger_use.thumb * GEN.data.char_total / 100
-                }
-            };
+                    Finger::LP | Finger::RP => {
+                        usage - GEN.weights.max_finger_use.pinky * GEN.data.char_total / 100
+                    }
+                    Finger::LR | Finger::RR => {
+                        usage - GEN.weights.max_finger_use.ring * GEN.data.char_total / 100
+                    }
+                    Finger::LM | Finger::RM => {
+                        usage - GEN.weights.max_finger_use.middle * GEN.data.char_total / 100
+                    }
+                    Finger::LI | Finger::RI => {
+                        usage - GEN.weights.max_finger_use.index * GEN.data.char_total / 100
+                    }
+                    Finger::LT | Finger::RT => {
+                        usage - GEN.weights.max_finger_use.thumb * GEN.data.char_total / 100
+                    }
+                };
 
             assert_eq!(
                 GEN.finger_usage_score(finger, usage),
