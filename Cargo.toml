@@ -13,6 +13,11 @@ members = [
     "oxeylyzer-tauri/src-tauri"
 ]
 
+[workspace.package]
+# MSRV mirror: the floor CI computes as the oldest of the three newest stable
+# releases. scripts/ci/rust-window.sh prints the truth; this value must match it.
+rust-version = "1.97"
+
 [workspace.dependencies]
 anyhow = "1.0"
 directories = "5"

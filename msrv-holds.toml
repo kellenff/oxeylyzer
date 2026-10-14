@@ -1,0 +1,24 @@
+# MSRV hold records (FR-002a, data-model.md E3).
+#
+# When a dependency's latest stable requires a Rust version outside the three-release
+# window, the WINDOW WINS: the dependency is held at its newest window-compatible
+# version and the hold is recorded here. The freshness step reads this file and
+# reports those crates "held (recorded)" instead of "behind" — never silent.
+#
+# Fields per [[hold]] entry:
+#   crate         — dependency name being held
+#   held          — version actually resolved in Cargo.lock
+#   latest        — newest stable available
+#   required_rust — `rust-version` declared by `latest`
+#   reason        — why the window wins for this project
+#
+# A hold whose `required_rust` now fits inside the window is stale: the freshness
+# step fails the build until the entry is removed (the dependency can be upgraded).
+#
+# Example shape (there are no holds at planning time — every 009 upgrade fits 1.97):
+#   [[hold]]
+#   crate = "example"
+#   held = "1.2.3"
+#   latest = "2.0.0"
+#   required_rust = "1.99"
+#   reason = "2.0 requires an out-of-window toolchain; revisit when 1.99 enters the window"

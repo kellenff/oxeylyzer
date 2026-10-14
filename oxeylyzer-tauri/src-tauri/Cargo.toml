@@ -4,6 +4,7 @@ version = "0.2.0"
 description = "A web frontend for Oxeylyzer, a keyboard layout analyzer"
 authors = ["o-x-e-y <lucoerlemans37@gmail.com>"]
 edition = "2024"
+rust-version.workspace = true
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary

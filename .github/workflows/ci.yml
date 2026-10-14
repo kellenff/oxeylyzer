@@ -50,5 +50,58 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      # --- dependency gate (contracts/ci-gate.md steps 3-8, fail-closed) ---
+
+      - name: MSRV floor compute (step 3)
+        id: msrv
+        run: echo "floor=$(./scripts/ci/rust-window.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: MSRV declare-match (step 4)
+        run: |
+          declared=$(sed -n 's/^rust-version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          floor="${{ steps.msrv.outputs.floor }}"
+          echo "declared rust-version: $declared"
+          echo "computed window floor: $floor"
+          if [ "$declared" != "$floor" ]; then
+            echo "::error::rust-version != computed window floor" >&2
+            exit 1
+          fi
+
+      - name: MSRV build-check (step 5)
+        run: |
+          floor="${{ steps.msrv.outputs.floor }}"
+          rustup toolchain install "$floor" --profile minimal
+          cargo +"$floor" check --workspace
+
+      - name: Install gate tools
+        run: cargo install cargo-audit cargo-outdated --locked
+
+      - name: Advisory audit (step 6)
+        run: |
+          # cargo-audit 0.22 has no --config flag; it reads ./.cargo/audit.toml.
+          mkdir -p .cargo
+          cp audit.toml .cargo/audit.toml
+          # --deny unsound: RUSTSEC-2026-0190 (anyhow) is an unsound
+          # informational; FR-003/US1-1 require the gate to bite on it when
+          # it is not recorded in audit.toml.
+          cargo audit --deny unsound
+
+      - name: Allowance-list lint (step 7)
+        run: python3 scripts/ci/lint-audit-toml.py audit.toml
+
+      - name: Freshness report (step 8, US1-3 summary)
+        run: |
+          cargo outdated --workspace --format json > outdated.json || {
+            echo "dependency gate unavailable (network)" >&2
+            echo "build not advisory-verified" >&2
+            exit 1
+          }
+          floor="${{ steps.msrv.outputs.floor }}"
+          python3 scripts/ci/freshness.py \
+            --json outdated.json \
+            --holds msrv-holds.toml \
+            --floor "$floor" \
+            --summary "$GITHUB_STEP_SUMMARY"
+
       - name: Run tests
         run: cargo test-all

@@ -1,0 +1,17 @@
+# Advisory allowance list (FR-004).
+#
+# Every id listed under [advisories] ignore is a consciously ACCEPTED advisory.
+# Each one MUST carry a `# reason:` comment on the line immediately above it —
+# CI (scripts/ci/lint-audit-toml.py) fails the build on an orphaned id, because an
+# accepted advisory with no recorded reason is indistinguishable from an oversight.
+# One id per line, that format is what the lint enforces.
+#
+# cargo-audit 0.22 has no `--config` flag: it reads `./.cargo/audit.toml` first and
+# falls back to `~/.cargo/audit.toml`. CI therefore copies this file to
+# `.cargo/audit.toml` before running `cargo audit`. This file is the single truth.
+#
+# Expected state after the 009 upgrades land: EMPTY (FR-007 clears the two live
+# advisories by version bump alone, so nothing needs accepting).
+[advisories]
+ignore = [
+]
