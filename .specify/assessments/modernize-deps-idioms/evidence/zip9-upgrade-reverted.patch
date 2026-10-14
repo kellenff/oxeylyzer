@@ -1,0 +1,224 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 669b457..a3af460 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -134,15 +134,6 @@ dependencies = [
+  "num-traits",
+ ]
+ 
+-[[package]]
+-name = "arbitrary"
+-version = "1.4.2"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
+-dependencies = [
+- "derive_arbitrary",
+-]
+-
+ [[package]]
+ name = "async-broadcast"
+ version = "0.7.2"
+@@ -939,17 +930,6 @@ dependencies = [
+  "serde_core",
+ ]
+ 
+-[[package]]
+-name = "derive_arbitrary"
+-version = "1.4.2"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
+-dependencies = [
+- "proc-macro2",
+- "quote",
+- "syn 2.0.117",
+-]
+-
+ [[package]]
+ name = "derive_more"
+ version = "0.99.20"
+@@ -1393,6 +1373,7 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
+ dependencies = [
+  "crc32fast",
+  "miniz_oxide",
++ "zlib-rs",
+ ]
+ 
+ [[package]]
+@@ -2513,9 +2494,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "libc"
+-version = "0.2.183"
++version = "0.2.190"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
++checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+ 
+ [[package]]
+ name = "libdof"
+@@ -2797,6 +2778,18 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "nix"
++version = "0.31.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
++dependencies = [
++ "bitflags 2.11.0",
++ "cfg-if",
++ "cfg_aliases",
++ "libc",
++]
++
+ [[package]]
+ name = "nodrop"
+ version = "0.1.14"
+@@ -3975,7 +3968,7 @@ dependencies = [
+  "libc",
+  "log",
+  "memchr",
+- "nix",
++ "nix 0.30.1",
+  "radix_trie",
+  "unicode-segmentation",
+  "unicode-width 0.2.0",
+@@ -5266,6 +5259,12 @@ version = "0.2.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+ 
++[[package]]
++name = "typed-path"
++version = "0.12.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
++
+ [[package]]
+ name = "typeid"
+ version = "1.0.3"
+@@ -6615,21 +6614,25 @@ dependencies = [
+ 
+ [[package]]
+ name = "zip"
+-version = "2.4.2"
++version = "9.0.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "fabe6324e908f85a1c52063ce7aa26b68dcb7eb6dbc83a2d148403c9bc3eba50"
++checksum = "9e2fc56a6707efb066c40aead2409ebb1224e6dde24a074e9fbc78ced500507b"
+ dependencies = [
+- "arbitrary",
+  "crc32fast",
+- "crossbeam-utils",
+- "displaydoc",
+  "flate2",
+  "indexmap 2.13.0",
+  "memchr",
+- "thiserror 2.0.18",
++ "nix 0.31.3",
++ "typed-path",
+  "zopfli",
+ ]
+ 
++[[package]]
++name = "zlib-rs"
++version = "0.6.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
++
+ [[package]]
+ name = "zmij"
+ version = "1.0.21"
+diff --git a/oxeylyzer-resources/Cargo.toml b/oxeylyzer-resources/Cargo.toml
+index d35a34e..59865e9 100644
+--- a/oxeylyzer-resources/Cargo.toml
++++ b/oxeylyzer-resources/Cargo.toml
+@@ -8,5 +8,5 @@ directories = { workspace = true }
+ oxeylyzer-core = { path = "../oxeylyzer-core" }
+ toml = { workspace = true }
+ ureq = "2"
+-zip = { version = "2", default-features = false, features = ["deflate"] }
++zip = { version = "9", default-features = false, features = ["deflate"] }
+ thiserror = { workspace = true }
+diff --git a/oxeylyzer-resources/src/download.rs b/oxeylyzer-resources/src/download.rs
+index 9917a04..b2a6f95 100644
+--- a/oxeylyzer-resources/src/download.rs
++++ b/oxeylyzer-resources/src/download.rs
+@@ -70,10 +70,10 @@ where
+ 
+ /// Whether a relative entry path stays at or below its own root.
+ ///
+-/// Same rule as [`zip::read::ZipFile::enclosed_name`] — which the extraction loop
+-/// already applies to the raw name — but callable on the *remainder* left after
+-/// [`ZIP_INNER_PREFIX`] is stripped. Validating the whole name lets the prefix bank
+-/// one level of depth, which a single `../` then spends to escape the destination.
++/// Applied to the raw archive name after [`ZIP_INNER_PREFIX`] is stripped: the
++/// prefix banks one level of depth, so a single `../` spent on it must not read as
++/// in-bounds. Absolute paths, drive prefixes, and any `..` that would climb out of
++/// the root are refused.
+ fn is_contained(rel: &str) -> bool {
+     let mut depth = 0usize;
+     for component in Path::new(rel).components() {
+@@ -104,24 +104,34 @@ fn extract_bytes(body: &[u8], dest: &Path) -> Result<(), ResourceError> {
+             .by_index(i)
+             .map_err(|e| ResourceError::Extraction(e.to_string()))?;
+ 
+-        // `enclosed_name` rejects NUL bytes, absolute paths, and drive prefixes, and
+-        // any `..` that would climb out of the archive root. It counts components
+-        // against a depth counter, so the `oxeylyzer-data-files/` prefix banks one
+-        // level of depth — exactly what one `../` after the prefix spends. The prefix
+-        // must be stripped first and the remainder checked against the same rule;
+-        // validating the whole name would accept `oxeylyzer-data-files/../escaped.txt`.
++        // Containment is decided here, on the raw entry name — never through
++        // `ZipFile::enclosed_name`. That method's semantics are a moving target: zip 2
++        // rejected a `..` that climbed out of the archive root, while zip 9 normalizes
++        // it away instead (`data-files/../escaped.txt` becomes plain `escaped.txt`, and
++        // a leading `/` or drive prefix silently loses its root). Both count as "safe"
++        // by zip's own rules — files stay inside `dest` — but normalization would let
++        // this loop write to paths the archive never claimed. Checking the raw name
++        // keeps the policy ours instead of inheriting whatever upstream calls safe
++        // next version.
+         let escapes = |name: &str| {
+             ResourceError::Extraction(format!("archive entry escapes destination: {name}"))
+         };
+-        let enclosed = file.enclosed_name().ok_or_else(|| escapes(file.name()))?;
+-
+-        let raw_name = enclosed.to_string_lossy();
+-        let stripped = raw_name.strip_prefix(ZIP_INNER_PREFIX).unwrap_or(&raw_name);
++        let raw_name = file
++            .name()
++            .map_err(|e| ResourceError::Extraction(e.to_string()))?
++            .into_owned();
++
++        // Strip the prefix as a string operation, before any path normalization:
++        // `oxeylyzer-data-files//tmp/x` collapses to `tmp/x` when read as a Path, but
++        // leaves an absolute `/tmp/x` remainder here, which `is_contained` then refuses.
++        let stripped = raw_name
++            .strip_prefix(ZIP_INNER_PREFIX)
++            .unwrap_or(raw_name.as_str());
+         if stripped.is_empty() {
+             continue;
+         }
+         if !is_contained(stripped) {
+-            return Err(escapes(file.name()));
++            return Err(escapes(&raw_name));
+         }
+ 
+         let out_path = dest.join(stripped);
+@@ -307,10 +317,11 @@ mod tests {
+         std::fs::remove_dir_all(&root).ok();
+     }
+ 
+-    /// A second `/` after the prefix survives `enclosed_name()` (its component walk
+-    /// collapses repeated separators) but leaves a *rooted* remainder once the prefix
+-    /// is stripped, so `dest.join` discards `dest` and writes to the literal path.
+-    /// This is the absolute-path variant of the same ordering bug.
++    /// A second `/` after the prefix collapses to nothing when the name is read as a
++    /// Path, but leaves a *rooted* remainder once the prefix is stripped as a string, so
++    /// `dest.join` would discard `dest` and write to the literal path. This is the
++    /// absolute-path variant of the same ordering bug, and the reason the prefix is
++    /// stripped before containment is checked rather than after normalization.
+     #[test]
+     fn doubled_separator_after_prefix_is_rejected() {
+         let root = std::env::temp_dir().join(format!(
+
