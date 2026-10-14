@@ -4,7 +4,12 @@ This file defines how this wiki is structured and maintained. Edit it to
 change the rules; `/speckit.wiki.*` commands read it before writing anything.
 
 ## Scope
-1. (not set — pass a sentence to /speckit.wiki.init)
+1. Durable knowledge about the Oxeylyzer workspace: how its crates and the
+   desktop app actually behave, the decisions behind them and the alternatives
+   rejected, external facts the code depends on, and procedures that took real
+   effort to work out. Feature and bug artifacts under `specs/` and
+   `.specify/` are the primary sources; source files and upstream docs are
+   cited when they prove a claim. Transient status is out of scope.
 
 ## Page types
 | Type | Holds | Example title |

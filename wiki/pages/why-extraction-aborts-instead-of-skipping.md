@@ -1,8 +1,8 @@
 ---
 title: Why Extraction Aborts Instead of Skipping
 type: decision
-sources: [S001, S002]
-updated: 2026-10-06
+sources: [S001, S002, S014]
+updated: 2026-10-13
 ---
 
 An archive entry the containment check **refuses** aborts extraction. It is
@@ -26,10 +26,19 @@ a partial data directory (S001).
 
 ## Entries the check accepts bypass this entirely
 
-The abort path only engages for entries `enclosed_name()` rejects. An entry it
-accepts is extracted and reported as success like any other — no abort, no
-sentinel. One such shape currently escapes the destination instead of being
-refused: see [Archive Path Containment](./archive-path-containment.md) (S002).
+The abort path only engages for entries the containment check rejects. An entry
+it accepts is extracted and reported as success like any other — no abort, no
+sentinel. Until `3d0d66d` one accepted shape escaped the destination instead of
+being refused; that breach is closed (see
+[Archive Path Containment](./archive-path-containment.md)) (S002, S014).
+
+Under `zip` ≥ 9 this section matters more, not less: `enclosed_name()` stopped
+rejecting and started *normalizing*, so a hostile name becomes an accepted,
+in-bounds write the archive never claimed — with the sentinel written behind
+it. Feature 009's answer is to keep abort-on-refusal and move the decision to
+the raw name: [Zip 9 Normalizes Paths That Zip 2 Refused](./zip9-normalizes-paths-that-zip2-refused.md)
+(S014).
 
 Related: [Archive Path Containment](./archive-path-containment.md) ·
+[Zip 9 Normalizes Paths That Zip 2 Refused](./zip9-normalizes-paths-that-zip2-refused.md) ·
 [Data Archive Pipeline](./data-archive-pipeline.md)

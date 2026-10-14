@@ -1,36 +1,33 @@
 # Wiki Lint Report — 2026-10-13
 
-| # | Check | Severity | Page | Finding | Suggested fix |
-|---|-------|----------|------|---------|---------------|
-| 1 | citations | semantic | `probing-crate-behavior-from-a-scratch-crate.md` | Carries an S013-derived pointer — "go one step further and diff the pre-fix and post-fix outputs; see [A/B A Fix With Worktrees And A Scratch Binary]" — but the page declares `sources: [S012]` only and still reads `updated: 2026-10-06`. The S013 ingest added that sentence while deliberately leaving the frontmatter untouched. | **Applied** (follow-up edit, 2026-10-13): added `S013` to `sources` and set `updated: 2026-10-13`. Provenance sweep now clean. |
+Scope: full pass (34 pages, 14 sources, INDEX.md, sources.md, SCHEMA.md).
+Config: `wiki/`, auto_fix: `index-and-links`, stale_after_days: 90, require_citations: true, page_max_words: 600.
 
-## Counts per check
+## Status: all findings resolved
 
-| Check | Severity | Findings | Notes |
-|-------|----------|----------|-------|
-| index-drift | mechanical | 0 | 32 pages on disk, 32 index lines, no duplicates, no dangling targets. Type sections match frontmatter `type` for all 32. |
-| links | mechanical | 0 | Every relative `./page.md` target exists; every cited S-id (`S001`–`S013`) is registered in `sources.md`. |
-| orphans | structural | 0 | Every page has ≥1 inbound link from another page. Lowest in-degree is 1 (`ab-fix-with-worktrees.md`, `formatting-rust-without-cargo-fmt.md`, `tauri-setup-hook-runs-before-webview.md`). |
-| contradictions | semantic | 0 | 0 open `> ⚠ conflict:` markers; all 7 are `> ✔ resolved:`. Pages sharing S013 (`one-scoring-standard`, `scoring-cache-and-layout-cache`, `exact-integer-scoring-is-an-invariant`) assert one consistent standard: `score() == score_with_precision(p) == cache.total_score()`, with `analyze` on `usize::MAX` as the acknowledged exception. |
-| stale | semantic | 0 | None older than 90 days (threshold `2026-07-15`; oldest page is `2026-10-06`). No page's own source predates it. |
-| citations | semantic | 1 | All substantive prose paragraphs carry S-ids; the one gap was `# 1`, now applied. Declared-vs-cited source sets match on every page. |
+The five findings from the initial pass were applied later the same day.
+Re-ran every check; **0 open findings**.
 
-## Fixes applied vs. suggested
+| # | Check | Severity | Page | Finding | Resolution |
+|---|-------|----------|------|---------|------------|
+| 1 | links | mechanical | sources.md (S014 row) | `archive-path-containment.md` cited S014; row omitted it | applied — appended to S014 `Pages touched` |
+| 2 | links | mechanical | sources.md (S014 row) | same for `why-extraction-aborts-instead-of-skipping.md` | applied — appended to S014 |
+| 3 | links | mechanical | sources.md (S002, S003 rows) | `zip9-normalizes-paths-that-zip2-refused.md` cited both; neither row listed it | applied — appended to S002 and S003 |
+| 4 | links | mechanical | sources.md (S004 row) | `config-loader-is-the-contract.md` cited S004; row omitted it (pre-existing) | applied — appended to S004 |
+| 5 | schema | mechanical | SCHEMA.md | `## Scope` was the unset placeholder | applied — scope sentence written |
 
-- **Applied:** 1 — finding `# 1` fixed by follow-up edit (frontmatter `sources` + `updated`). The `index-drift` and `links` mechanical classes were already clean; `INDEX.md` needed no regeneration and no link repair.
-- **Suggested:** none outstanding.
+## Checks run (re-verified after fixes)
 
-## Verification detail
+| Check | Result |
+|-------|--------|
+| index-drift | clean — all 34 pages in INDEX, no dead or duplicate index lines |
+| links | clean — no `./…md` target missing; every `sources.md` page name exists; registry ↔ frontmatter now fully consistent |
+| orphans | clean — every page linked from at least one other page |
+| contradictions | clean — 0 `⚠ conflict:` open; 7 pages carry closed `✔ resolved:` markers (`data-version-currency`, `formatting-rust-without-cargo-fmt`, `auto-layout-naming`, `archive-path-containment`, `platform-root-resolution`, `layout-row-separator-convention`, `why-obsolete-rs-stays`) |
+| stale | clean — no page older than 90 days; no page predating a re-ingest of a source it cites |
+| citations | clean — every page carries ≥1 S-id; no unknown S-id cited; all frontmatter `sources` resolve |
+| schema | clean — frontmatter fields present and types in-schema; largest page 501/600 words |
 
-- **Marker sweep:** 7 `✔ resolved` (in `archive-path-containment`, `auto-layout-naming`, `data-version-currency`, `formatting-rust-without-cargo-fmt`, `layout-row-separator-convention`, `platform-root-resolution`, `why-obsolete-rs-stays`), 0 `⚠ conflict`.
-- **Word caps:** none over the 600-word limit; largest are `archive-path-containment.md` (596), `data-version-currency.md` (582), `testing-zip-extraction-in-crate.md` (577).
-- **Frontmatter:** all 32 pages have `title`, `type`, `sources`, `updated` and open with `---`.
-- **Provenance sweep:** cross-referenced every `sources.md` "pages touched" entry against each page's `updated` date; the only mismatch is finding `# 1`.
+## Suggested (non-blocking)
 
-## Highest-value finding
-
-Finding `# 1` was the only one, and it was a provenance gap rather than a wrong claim: the affected page's content is correct, but it contained S013-derived navigation while declaring only S012. Left unaddressed it would have made the next freshness check misreport the page as untouched by the S013 ingest. It is now resolved.
-
-## Next step
-
-No open findings remain. The wiki is clean: `/speckit.wiki.query <question>` is ready to test what it knows.
+- `sources.md` rows S007–S013 render as one unwrapped text blob in the raw file (all rows intact and parseable; the source file appears to have lost its newlines there). Cosmetic only — no data lost, registry checks pass. Reformat if the file is ever hand-edited.

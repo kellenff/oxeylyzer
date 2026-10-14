@@ -6,7 +6,7 @@ page files, not here.
 
 ## concept
 - [Corpus Cleaner Direction](./pages/corpus-cleaner-direction.md) — maps corpus char → keystrokes, never the reverse; `with_dead_key` is a specialized `multiple`, and the "inversion" bug report read it backwards
-- [Archive Path Containment](./pages/archive-path-containment.md) — `enclosed_name()`, prefix-strip ordering, and a verified single-`..` breach in `download.rs`
+- [Archive Path Containment](./pages/archive-path-containment.md) — `enclosed_name()`, prefix-strip ordering; the verified single-`..` breach closed by `3d0d66d`'s second check on the stripped remainder
 - [Data Version Currency](./pages/data-version-currency.md) — `DataCurrency` Absent/Stale/Current, component-wise compare, downgrades land in `Current`
 - [Layout Row Separator Convention](./pages/layout-row-separator-convention.md) — row gaps are the layout's, not the editor's; hand-alternated layouts use double spaces
 - [Exact-Integer Scoring Is An Invariant](./pages/exact-integer-scoring-is-an-invariant.md) — scores compare as `i64`, so "identical" is bit-for-bit; a one-unit shift silently changes which layouts are saved
@@ -24,6 +24,8 @@ page files, not here.
 - [Why One Shared Naming Rule](./pages/why-one-shared-naming-rule.md) — three copies of `skip(10).take(4)` in three crates drifted, with the reasoning recorded as a TODO in only one
 - [Why obsolete.rs Stays](./pages/why-obsolete-rs-stays.md) — the "obsolete" module is the uncached reference path the comparison test and benchmark depend on; deleting it removes the only independent check
 - [Why Scoring Does Not Mutate The Cache](./pages/why-scoring-does-not-mutate-the-cache.md) — a scored-but-rejected swap would leave values behind and silently corrupt every later candidate
+- [Zip 9 Normalizes Paths That Zip 2 Refused](./pages/zip9-normalizes-paths-that-zip2-refused.md) — `enclosed_name()` switched from reject to normalize; 009 refuses by validating the raw name, and the replacement must carry the NUL guard over
+- [Declare Current As A CI-Computed Window](./pages/declare-current-as-a-ci-computed-window.md) — MSRV floor derived from the dist feed in CI, never pinned; window wins vs dep recency; the gate fails closed without network
 
 ## component
 - [Desktop Startup Failure Reporting](./pages/desktop-startup-failure-reporting.md) — `initialize()` as five blocking steps, each message naming a file and a remedy
