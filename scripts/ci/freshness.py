@@ -94,6 +94,18 @@ def main() -> int:
     if tauri.exists():
         direct |= set(declared_deps(tauri, root / "Cargo.toml"))
 
+    # Versions actually present in the lockfile, per name. cargo-outdated emits a
+    # row per *resolved copy* of a duplicated crate: a 1.9.3 transitive copy shows
+    # up even though the direct requirement resolves to 2.14.2. Only a name with no
+    # copy at `compat` anywhere in the lock is real drift of the direct requirement.
+    lock_versions: dict[str, list[str]] = {}
+    try:
+        lock = tomllib.loads((root / "Cargo.lock").read_text())
+        for pkg in lock.get("package", []):
+            lock_versions.setdefault(pkg["name"], []).append(pkg["version"])
+    except (OSError, ValueError) as err:
+        die(f"{GATE_DOWN}: cannot read Cargo.lock ({err})")
+
     floor = rust_minor(args.floor)
     rows = []
     failures = []
@@ -105,6 +117,9 @@ def main() -> int:
             if name not in direct or "->" in name or latest in ("---", "Removed"):
                 continue
             seen.add(name)
+            compat = dep.get("compat", "---")
+            if compat not in ("---", "Removed") and compat in lock_versions.get(name, []):
+                continue  # direct requirement resolves at compat; stale transitive copy, not our drift
             behind_major = major(latest) > major(project) >= 0
             if name in holds:
                 hold = holds[name]
@@ -124,7 +139,7 @@ def main() -> int:
                 )
             else:
                 status = "behind (minor/compat)"
-            rows.append((name, member, project, dep.get("compat", "---"), latest, status))
+            rows.append((name, member, project, compat, latest, status))
 
     width = max((len(r[0]) for r in rows), default=4)
     for name, member, project, compat, latest, status in sorted(rows):

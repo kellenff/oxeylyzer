@@ -14,8 +14,8 @@ documentation = "https://docs.rs/oxeylyzer-core"
 itertools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-nanorand = "0.7.0"
-rayon = "1.5.1"
+nanorand = "0.8"
+rayon = "1.12"
 file-chunker = "0.1.1"
 anyhow = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }
@@ -31,5 +31,5 @@ num_cpus = "1.17"
 [dev-dependencies]
 time_this = "0"
 approx = "0"
-fancy-regex = "0.17.0"
+fancy-regex = "0.19"
 once_cell = { workspace = true }

@@ -290,8 +290,8 @@ where {
 
         let possible_swaps = (0..(matrix.len() as u8))
             .filter(|v| !pins.contains(&(*v as usize)))
-            .tuple_combinations::<(_, _)>()
-            .map(Into::into)
+            .array_combinations::<2>()
+            .map(|[a, b]| PosPair::from((a, b)))
             .collect();
 
         let mut char_to_finger = Box::new([None; 60]);

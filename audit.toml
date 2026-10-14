@@ -4,14 +4,15 @@
 # Each one MUST carry a `# reason:` comment on the line immediately above it —
 # CI (scripts/ci/lint-audit-toml.py) fails the build on an orphaned id, because an
 # accepted advisory with no recorded reason is indistinguishable from an oversight.
-# One id per line, that format is what the lint enforces.
+# One id per line; that format is what the lint enforces.
 #
 # cargo-audit 0.22 has no `--config` flag: it reads `./.cargo/audit.toml` first and
 # falls back to `~/.cargo/audit.toml`. CI therefore copies this file to
 # `.cargo/audit.toml` before running `cargo audit`. This file is the single truth.
-#
-# Expected state after the 009 upgrades land: EMPTY (FR-007 clears the two live
-# advisories by version bump alone, so nothing needs accepting).
 [advisories]
 ignore = [
+  # reason: glib via tauri gtk stack; glib 0.20 outside tauri v2's reach; affected VariantStrIter fns never called. Revisit when tauri moves to glib >= 0.20.
+  "RUSTSEC-2024-0429",
+  # reason: memmap2 via file-chunker (pins 0.5.x); patched 0.9.11 unreachable there; affected async advise/flush fns never called. Revisit if file-chunker is replaced.
+  "RUSTSEC-2026-0186",
 ]

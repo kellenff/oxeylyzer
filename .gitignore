@@ -13,3 +13,4 @@ session.json
 .vite
 result
 tarpaulin-report.*
+oxeylyzer-tauri/src-tauri/Cargo.lock

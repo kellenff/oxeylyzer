@@ -577,7 +577,7 @@ mod tests {
             .collect::<String>();
 
         let re = Regex::new(r"(.)\1").unwrap();
-        let monkeyracer_repeat = re.replace_all(&monkeyracer, |caps: &Captures| {
+        let monkeyracer_repeat = re.replace_all(&monkeyracer, |caps: &Captures<str>| {
             format!("{}{}", &caps[1], REPEAT_KEY)
         });
 

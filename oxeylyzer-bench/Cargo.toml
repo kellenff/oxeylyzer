@@ -10,6 +10,6 @@ oxeylyzer-core = { path = "../oxeylyzer-core" }
 oxeylyzer-repl = { path = "../oxeylyzer-repl" }
 oxeylyzer-resources = { path = "../oxeylyzer-resources" }
 anyhow = { workspace = true }
-ratatui = "0.29"
-crossterm = "0.28"
+ratatui = "0.30"
+crossterm = "0.29"
 xflags = { git = "https://github.com/O-X-E-Y/xflags/" }

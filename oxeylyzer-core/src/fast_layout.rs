@@ -432,8 +432,8 @@ impl FSpeedIndices {
                     .zip(keyboard)
                     .zip(0u8..)
                     .filter_map(|((f, k), i)| (f == &finger).then_some((k, i)))
-                    .tuple_combinations::<(_, _)>()
-                    .map(|((k1, i1), (k2, i2))| {
+                    .array_combinations::<2>()
+                    .map(|[(k1, i1), (k2, i2)]| {
                         let pair = PosPair(i1, i2);
                         let dist = (dist(k1, k2, finger, finger)
                             * 100.0
@@ -532,8 +532,8 @@ impl ScissorIndices {
             .zip(keyboard)
             .enumerate()
             .map(|(i, t)| (i as u8, t))
-            .tuple_combinations::<(_, _)>()
-            .flat_map(|((i1, (&f1, k1)), (i2, (&f2, k2)))| {
+            .array_combinations::<2>()
+            .flat_map(|[(i1, (&f1, k1)), (i2, (&f2, k2))]| {
                 if !adjacent_fingers_same_hand(f1, f2) {
                     return None;
                 }
@@ -666,8 +666,8 @@ impl LsbIndices {
             .zip(keyboard)
             .enumerate()
             .map(|(i, t)| (i as u8, t))
-            .tuple_combinations::<(_, _)>()
-            .filter_map(|((i1, (&f1, k1)), (i2, (&f2, k2)))| {
+            .array_combinations::<2>()
+            .filter_map(|[(i1, (&f1, k1)), (i2, (&f2, k2))]| {
                 if f1.hand() != f2.hand() {
                     return None;
                 }
@@ -738,8 +738,8 @@ impl PinkyRingIndices {
             .iter()
             .enumerate()
             .map(|(i, t)| (i as u8, t))
-            .tuple_combinations::<(_, _)>()
-            .filter_map(|((i1, &f1), (i2, &f2))| {
+            .array_combinations::<2>()
+            .filter_map(|[(i1, &f1), (i2, &f2)]| {
                 // same hand only
                 if f1.hand() != f2.hand() {
                     return None;
@@ -869,9 +869,9 @@ impl StretchIndices {
             .zip(keys)
             .enumerate()
             .map(|(i, t)| (i as u8, t))
-            .tuple_combinations::<(_, _)>()
-            .filter(|((_, ((_, f1), _)), (_, ((_, f2), _)))| f1 != f2 && (f1.hand() == f2.hand()))
-            .filter_map(|((i1, ((k1, &f1), _c1)), (i2, ((k2, &f2), _c2)))| {
+            .array_combinations::<2>()
+            .filter(|[(_, ((_, f1), _)), (_, ((_, f2), _))]| f1 != f2 && (f1.hand() == f2.hand()))
+            .filter_map(|[(i1, ((k1, &f1), _c1)), (i2, ((k2, &f2), _c2))]| {
                 let diff = (f1 as u8).abs_diff(f2 as u8) as f64;
                 let fd = diff * 1.35;
                 // let minimum_diff = diff * 0.9;
