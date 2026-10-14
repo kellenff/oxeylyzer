@@ -70,10 +70,10 @@ where
 
 /// Whether a relative entry path stays at or below its own root.
 ///
-/// Same rule as [`zip::read::ZipFile::enclosed_name`] — which the extraction loop
-/// already applies to the raw name — but callable on the *remainder* left after
-/// [`ZIP_INNER_PREFIX`] is stripped. Validating the whole name lets the prefix bank
-/// one level of depth, which a single `../` then spends to escape the destination.
+/// Applied to the raw archive name after [`ZIP_INNER_PREFIX`] is stripped: the
+/// prefix banks one level of depth, so a single `../` spent on it must not read as
+/// in-bounds. Absolute paths, drive prefixes, NUL bytes, and any `..` that would
+/// climb out of the root are refused.
 fn is_contained(rel: &str) -> bool {
     let mut depth = 0usize;
     for component in Path::new(rel).components() {
@@ -104,26 +104,45 @@ fn extract_bytes(body: &[u8], dest: &Path) -> Result<(), ResourceError> {
             .by_index(i)
             .map_err(|e| ResourceError::Extraction(e.to_string()))?;
 
-        // `enclosed_name` rejects NUL bytes, absolute paths, and drive prefixes, and
-        // any `..` that would climb out of the archive root. It counts components
-        // against a depth counter, so the `oxeylyzer-data-files/` prefix banks one
-        // level of depth — exactly what one `../` after the prefix spends. The prefix
-        // must be stripped first and the remainder checked against the same rule;
-        // validating the whole name would accept `oxeylyzer-data-files/../escaped.txt`.
+        // Containment is decided here, on the raw entry name — never through
+        // `ZipFile::enclosed_name`. That method's semantics are a moving target: zip 2
+        // rejected a `..` that climbed out of the archive root, while zip 9 normalizes
+        // it away instead (`oxeylyzer-data-files/../escaped.txt` becomes plain
+        // `escaped.txt`, and a leading `/` or drive prefix silently loses its root).
+        // Both count as "safe" by zip's own rules — files stay inside `dest` — but
+        // normalization would let this loop write to paths the archive never claimed.
+        // Checking the raw name keeps the policy ours instead of inheriting whatever
+        // upstream calls safe next version.
         let escapes = |name: &str| {
             ResourceError::Extraction(format!("archive entry escapes destination: {name}"))
         };
-        let enclosed = file.enclosed_name().ok_or_else(|| escapes(file.name()))?;
+        let raw_name = file
+            .name()
+            .map_err(|e| ResourceError::Extraction(e.to_string()))?
+            .into_owned();
 
-        let raw_name = enclosed.to_string_lossy();
-        let stripped = raw_name.strip_prefix(ZIP_INNER_PREFIX).unwrap_or(&raw_name);
+        // `Path::components()` drops NUL bytes instead of refusing them, which
+        // `enclosed_name()` used to reject; check the raw name before anything else.
+        if raw_name.contains('\0') {
+            return Err(escapes(&raw_name));
+        }
+
+        // Strip the prefix as a string operation, before any path normalization:
+        // `oxeylyzer-data-files//tmp/x` collapses to `tmp/x` when read as a Path, but
+        // leaves an absolute `/tmp/x` remainder here, which `is_contained` then refuses.
+        let stripped = raw_name
+            .strip_prefix(ZIP_INNER_PREFIX)
+            .unwrap_or(raw_name.as_str());
         if stripped.is_empty() {
             continue;
         }
         if !is_contained(stripped) {
-            return Err(escapes(file.name()));
+            return Err(escapes(&raw_name));
         }
 
+        // shortcut: entries written before a mid-archive refusal stay on disk;
+        // the `.data-version` sentinel (written only after full success) is what
+        // marks an install complete. Upgrade to temp-dir staging if that ever ships.
         let out_path = dest.join(stripped);
 
         if file.is_dir() {
@@ -242,6 +261,22 @@ mod tests {
             Vec::<String>::new(),
             "file was written outside the destination"
         );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// zip-9's `enclosed_name()` *normalizes* `oxeylyzer-data-files/../escaped.txt`
+    /// into `escaped.txt` instead of rejecting it. The containment decision must come
+    /// from `is_contained` on the RAW name, so the archive never gets to rewrite what
+    /// it claimed. FR-013, the zip-9 upgrade guard.
+    #[test]
+    fn zip9_normalization_rejection() {
+        let (root, dest, ok) = extract(&[("oxeylyzer-data-files/../escaped.txt", "pwned")]);
+        assert!(!ok, "raw-name containment must reject the normalizable entry");
+        assert!(
+            !dest.join("escaped.txt").exists(),
+            "refusal must not degrade into writing dest/escaped.txt under the claimed name"
+        );
+        assert_eq!(files_outside(&root), Vec::<String>::new());
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -390,6 +425,28 @@ mod tests {
             "sentinel must not be written when extraction aborts, or the next \
              startup mistakes a partial install for a complete one"
         );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The hostile entry FIRST: every later valid entry is skipped, and the sentinel
+    /// invariant holds in this order too — `.data-version` absent whenever any entry
+    /// was refused (FR-014, edge case "hostile entry appears before valid one").
+    #[test]
+    fn hostile_entry_first_aborts_without_sentinel() {
+        let (root, dest, ok) = extract(&[
+            ("oxeylyzer-data-files/../../escape.txt", "pwned"),
+            ("oxeylyzer-data-files/good.txt", "fine"),
+        ]);
+        assert!(!ok, "leading hostile entry must abort extraction");
+        assert!(
+            !dest.join(".data-version").exists(),
+            "sentinel must be absent when an entry was refused"
+        );
+        assert!(
+            !dest.join("good.txt").exists(),
+            "entries after the refusal must not be written"
+        );
+        assert_eq!(files_outside(&root), Vec::<String>::new());
         std::fs::remove_dir_all(&root).ok();
     }
 }
