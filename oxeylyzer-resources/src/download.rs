@@ -34,17 +34,19 @@ where
 {
     progress(DownloadProgress::Connecting);
 
-    let resp = ureq::get(DATA_URL)
+    let mut resp = ureq::get(DATA_URL)
         .call()
         .map_err(|e| ResourceError::Download(e.to_string()))?;
 
     let content_length = resp
-        .header("content-length")
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok());
 
     let mut body = Vec::new();
     let mut bytes_done: u64 = 0;
-    let mut reader = resp.into_reader();
+    let mut reader = resp.body_mut().as_reader();
     let mut buf = [0u8; 16384];
 
     loop {
@@ -271,7 +273,10 @@ mod tests {
     #[test]
     fn zip9_normalization_rejection() {
         let (root, dest, ok) = extract(&[("oxeylyzer-data-files/../escaped.txt", "pwned")]);
-        assert!(!ok, "raw-name containment must reject the normalizable entry");
+        assert!(
+            !ok,
+            "raw-name containment must reject the normalizable entry"
+        );
         assert!(
             !dest.join("escaped.txt").exists(),
             "refusal must not degrade into writing dest/escaped.txt under the claimed name"

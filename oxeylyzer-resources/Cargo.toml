@@ -8,6 +8,6 @@ rust-version.workspace = true
 directories = { workspace = true }
 oxeylyzer-core = { path = "../oxeylyzer-core" }
 toml = { workspace = true }
-ureq = "2"
+ureq = "3"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 thiserror = { workspace = true }
