@@ -1,9 +1,16 @@
 # Dependency Policy
 
 The rule this repo lives by: **"current" is a checked property, not a remembered one.**
-Every statement below is enforced by a step in `.github/workflows/ci.yml`; if a step
-can be disabled, it will drift again. Reproduce any of them locally — see
-*Local reproduction* at the end.
+Every statement below has a step in `.github/workflows/ci.yml` and a local reproduction
+command (see *Local reproduction* at the end); if a step can be disabled, it will drift
+again.
+
+> **Gate status.** Every step here is verified locally on the `009` branch (floor compute,
+> mirror match, `cargo +1.97 check`, `cargo audit --deny unsound`, the allowance lint, and
+> the freshness report all pass or fail as specified). GitHub Actions has **not run on this
+> fork** — the repo reports zero workflow runs, because Actions is off by default on forks.
+> Until Actions is enabled for `kellenff/oxeylyzer`, the gate is enforced by the local
+> commands, and the workflow is what CI will run once it is switched on.
 
 ## 1. MSRV window rule
 
@@ -66,7 +73,18 @@ advisory is always discoverable in the repo rather than only in a CI log.
 `--config` flag — it reads `./.cargo/audit.toml` — so CI copies the file into place
 before auditing.
 
-Post-upgrade, this list is expected to be **empty**.
+Post-upgrade the list is expected to be **empty in principle**; in practice it holds
+what the window cannot reach. Current entries (each carries its reason in `audit.toml`):
+`RUSTSEC-2024-0429` (glib, via the Tauri GTK stack) and `RUSTSEC-2026-0186` (memmap2,
+pinned by `file-chunker`). Both are transitive, neither is reachable at a patched version
+without dropping the crate that pins it, and both reasons name the condition that retires
+them.
+
+Separately, `fxhash` and `proc-macro-error` raise *unmaintained* warnings that
+`--deny unsound` does not fail on. `fxhash` is retained deliberately (§7);
+`proc-macro-error` is transitive — it enters only through `glib-macros`/`gtk3-macros` in
+the Linux Tauri GTK stack (it is not even in the macOS dependency graph), so it moves when
+the Tauri stack updates its macros, not when we choose to.
 
 ## 3. Freshness report and hold procedure
 
@@ -80,8 +98,28 @@ the job summary) and enforces:
 - `cargo-outdated` failure → build red with the gate-unavailable message, never a
   silent pass.
 
-No manual registry query is ever required: one CI log answers "what are we behind on,
-and by how much".
+The same script then checks the **frontend** (`oxeylyzer-tauri/package.json`) against
+the npm registry, because FR-006 names the Tauri frontend and the Rust-only gate
+would have left it silent:
+
+- a declared range that already admits the registry latest → `up to date` (so `^8.0.0`
+  with 8.3.4 published is current, not "behind" — a range floor is not an installed
+  version);
+- a range that cannot reach latest, major apart → build red, unless recorded as a hold;
+- a range form the script does not parse (`*`, git:, link:) → reported for a human,
+  never silently passed;
+- registry unreachable → build red with the gate-unavailable message, fail-closed.
+
+Frontend holds use the same `msrv-holds.toml` entries, keyed by package name; T056's
+"pin with a reason and surface it" resolves through this path. `npm_latest` shells out
+to `curl` rather than using urllib, because a framework python on macOS has no CA
+bundle and would otherwise fail the gate closed on a machine that is fine.
+
+No manual registry query is ever required, on either side of the repo: one CI log
+answers "what are we behind on, and by how much".
+
+`python3 scripts/ci/freshness.py --self-check --json /dev/null --floor 0` runs the npm
+range logic without a network, and fails if the caret/tilde/pin rules break.
 
 ## 4. Lockfile rule
 
@@ -141,11 +179,59 @@ Kept deliberately, each with the condition that would reopen it:
 
 ## 8. Fork identity
 
-This repository is the **maintained fork** of oxeylyzer. The original upstream is
-abandoned; do not read it as the source of truth for issues, releases or CI.
-Correspondingly, personal git forks are not permitted in the build: `xflags` and
-`ansi_rgb` (both `github.com/O-X-E-Y`) are replaced by clap v4 and an in-repo color
-helper. Verify with `cargo tree` — no `O-X-E-Y` source may appear.
+This repository is the **maintained fork** and the trunk for ongoing development:
+[o-x-e-y/oxeylyzer](https://github.com/o-x-e-y/oxeylyzer) is the original project. Read it
+as the origin, not as the source of truth for this code's issues or CI — there is no
+`upstream` remote wired up, and the fork does not wait on it.
+
+> **Correction to the 009 spec's premise.** spec.md describes upstream as "abandoned".
+> Measured on 2026-10-14: its `main` is quiet (last merge 2026-06-18) but its `staging`
+> branch is **active** — 26 commits ahead of `main`, head dated 2026-10-03, including
+> "update rust and fix new clippy warnings". So "abandoned" is not accurate for
+> upstream as a whole; what is true is that *this fork's `main`* is the trunk and
+> nothing here inherits from upstream automatically. The dependency work in 009 stands
+> on its own regardless.
+
+Overlap risk, measured rather than guessed: 12 files changed on this branch are also
+changed on upstream `staging` — `oxeylyzer-core/src/{fast_layout,generate}.rs`, the
+whole REPL parse path (`flags.rs`, `commands.rs`, `repl.rs`), and the Tauri side
+(`src-tauri/src/lib.rs`, `src/App.tsx`, `src/api.ts`, `src/store.ts`,
+`src/views/EditView.tsx`, `package.json`, `bun.lock`). Reconciling the two is a real
+merge with hot-path conflicts, not a fast-forward — so if upstream work is ever wanted,
+plan it as its own feature with scoring verified before/after (FR-017's fence applies).
+
+Personal git forks are not permitted in the build. Both are gone: `ansi_rgb` was replaced
+by the in-repo `oxeylyzer-repl/src/color.rs`, and `xflags` by clap v4. Verify with
+`cargo tree --workspace | grep -i 'O-X-E-Y\|git+'` — it must print nothing, and
+`Cargo.lock` must contain no `git+` source.
+
+## 9. Deviations from the spec as written
+
+Two requirements could not be met exactly. Both are recorded here rather than left as
+silent exceptions, because the honest version of "we are current" includes "and here is
+what we chose instead".
+
+**FR-015 — clap does not reproduce xflags' lexer, byte for byte.** The requirement says
+the REPL and bench "MUST accept and reject exactly what they do today". Measured against
+clap 4.6: it accepts attached-value forms the old parser rejected (`-n5`, `-n=5`,
+`--pins=ab`) and rejects hyphen-leading values it accepted (`-p -a`). No clap knob
+closes this (`require_equals` is worse — it breaks every space-separated form), so the
+port is **idiomatic clap**, and every differing row in the two parity tables carries a
+`// DIVERGENT:` comment naming the old outcome. Behavior deliberately preserved:
+`allow_hyphen_values` on `--pins` and the `config` f64 weight flags, because a leading
+`-` is real data there (`-p a-b` pins the hyphen key; `--sfbs -1.5` is a negative weight).
+
+**FR-018 — eslint is replaced by oxlint, not upgraded to eslint 10.** `typescript 7.0` and
+`eslint 10` cannot coexist: `typescript-eslint` throws `does not support TS 7.0` at its
+newest release (peer range `>=4.8.4 <6.1.0`). Since FR-002a says the constraint wins and
+the choice is what to hold, TS 7 is the requirement that mattered, so the eslint chain
+(`eslint`, `@eslint/js`, `@typescript-eslint/parser`, `eslint-plugin-solid`) was removed
+and `oxlint` (the Oxc linter, matching the Rolldown/Oxc bundler now in the build)
+replaced it. `eslint.config.js` is deleted. Lint coverage was verified by planting unused
+variables and a constant condition in both `.ts` and `.tsx`: oxlint flags both.
+
+Revisit when `typescript-eslint` supports TS 7 — that is the single condition that would
+reopening the eslint path make sense.
 
 ## Scope fence
 
@@ -173,11 +259,17 @@ mkdir -p .cargo && cp audit.toml .cargo/audit.toml
 cargo audit --deny unsound
 python3 scripts/ci/lint-audit-toml.py audit.toml
 
-# step 8 — freshness, gating on unrecorded majors
+# step 8 — freshness: Rust majors + the npm frontend, both gating
 cargo outdated --workspace --format json > outdated.json
 python3 scripts/ci/freshness.py --json outdated.json \
   --holds msrv-holds.toml --floor "$(./scripts/ci/rust-window.sh)"
 rm -f outdated.json .cargo/audit.toml
+
+# the npm range rules, without a network
+python3 scripts/ci/freshness.py --self-check --json /dev/null --floor 0
+
+# frontend build + types + lint (no CI job runs these; verify locally)
+cd oxeylyzer-tauri && bun install && bun run build && bunx tsc --noEmit && bunx oxlint src
 ```
 
 Fail-closed behaviour is testable offline: run the two network steps with no

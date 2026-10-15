@@ -6,7 +6,10 @@ edition = "2024"
 rust-version.workspace = true
 license = "Apache-2.0"
 description = "Core library for Oxeylyzer, a keyboard layout analyzer"
-repository = "https://github.com/o-x-e-y/oxeylyzer"
+# Maintained fork is the home of this code; the original project is history.
+# crates.io still serves upstream's 0.1.2 (owner: o-x-e-y); this workspace is 0.2.0
+# and has not been published from the fork.
+repository = "https://github.com/kellenff/oxeylyzer"
 categories = ["algorithms", "data-structures", "mathematics"]
 documentation = "https://docs.rs/oxeylyzer-core"
 
