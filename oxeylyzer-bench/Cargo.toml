@@ -12,4 +12,4 @@ oxeylyzer-resources = { path = "../oxeylyzer-resources" }
 anyhow = { workspace = true }
 ratatui = "0.30"
 crossterm = "0.29"
-xflags = { git = "https://github.com/O-X-E-Y/xflags/" }
+clap = { version = "4.6", features = ["derive"] }

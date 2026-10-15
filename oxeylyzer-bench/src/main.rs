@@ -9,13 +9,14 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
+use clap::Parser;
 use oxeylyzer_core::{data::Data, generate::Oxeylyzer, weights::Config};
 use oxeylyzer_resources::OxeylyzerDirs;
 
 use crate::runner::{AlgorithmKind, Budget};
 
 fn main() -> anyhow::Result<()> {
-    let flags = flags::Bench::from_env_or_exit();
+    let flags = flags::Bench::parse();
 
     let language = flags.language.unwrap_or_else(|| "english".to_string());
     let dirs = OxeylyzerDirs::resolve().map_err(|e| anyhow!("{e}"))?;

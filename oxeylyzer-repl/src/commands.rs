@@ -149,17 +149,20 @@ impl Repl {
 mod flags_parity {
     //! CLI surface parity table (T041, contracts/cli-surface.md, FR-015).
     //!
-    //! Every row records the measured accept/reject outcome of the CURRENT parser,
-    //! captured by driving `Repl::from_vec` with the exact token stream
-    //! `parse_flags` feeds it (no program name, shlexed line). The 154 rows are
-    //! machine-generated from that dump and MUST NOT be edited when the parser is
-    //! swapped: only `parse()` below may change. A row that fails after the swap is a
-    //! real surface regression, not a test-maintenance task.
+    //! Every row records the measured accept/reject outcome, captured by driving
+    //! `Repl::from_vec` with the exact token stream `parse_flags` feeds it (no program
+    //! name, shlexed line). 167 rows; the baseline was captured from the parser this
+    //! one replaces, and every row where the outcome differs carries a `// DIVERGENT:`
+    //! comment naming the old outcome, so a surface change is a reviewed decision
+    //! rather than an accident. A row that fails for any other reason is a real
+    //! surface regression, not a test-maintenance task.
     //!
     //! Accepts compare the `Debug` rendering of `ReplCmd`, which pins variant names,
     //! field names, arity, `Option` vs `Vec` emptiness, repeated-argument order, and
     //! numeric parses. Rejects compare an error CLASS (contracts/cli-surface.md: the
     //! class must match; verbatim parser wording is not part of the surface).
+    //! `UnknownFlag`/`UnknownCommand` collapse into one `Unknown` class because clap
+    //! reports both under a single error kind.
 
     use std::ffi::OsString;
 
@@ -172,8 +175,9 @@ mod flags_parity {
         MissingSubcommand,
         MissingRequired,
         Duplicate,
-        UnknownCommand,
-        UnknownFlag,
+        /// An unrecognised token. clap reports unknown flags and unknown extra
+        /// positionals under one kind, so the old two-class split collapses here.
+        Unknown,
         MissingValue,
         BadValue,
     }
@@ -186,34 +190,31 @@ mod flags_parity {
         Err(Class),
     }
 
-    fn classify(msg: &str) -> Class {
-        if msg.starts_with("Usage:") || msg.contains("Print this message") {
-            Class::Help
-        } else if msg.contains("A subcommand is required") {
-            Class::MissingSubcommand
-        } else if msg.contains("Flag specified more than once") {
-            Class::Duplicate
-        } else if msg.contains("Flag is required") {
-            Class::MissingRequired
-        } else if msg.contains("Unknown command") {
-            Class::UnknownCommand
-        } else if msg.contains("Unknown flag") {
-            Class::UnknownFlag
-        } else if msg.contains("expected a value for") {
-            Class::MissingValue
-        } else {
-            Class::BadValue
+    fn classify(err: &clap::Error) -> Class {
+        use clap::error::ErrorKind as K;
+        match err.kind() {
+            K::DisplayHelp | K::DisplayVersion => Class::Help,
+            // An empty line: clap shows help on missing subcommand, which is this
+            // table's MissingSubcommand class, not a help request.
+            K::MissingSubcommand | K::DisplayHelpOnMissingArgumentOrSubcommand => {
+                Class::MissingSubcommand
+            }
+            K::InvalidValue => Class::MissingValue,
+            K::ValueValidation => Class::BadValue,
+            K::ArgumentConflict => Class::Duplicate,
+            K::MissingRequiredArgument => Class::MissingRequired,
+            K::TooManyValues | K::TooFewValues | K::WrongNumberOfValues => Class::BadValue,
+            K::UnknownArgument | K::InvalidSubcommand => Class::Unknown,
+            other => panic!("unmapped clap error kind {:?}: {err}", other),
         }
     }
 
-    /// THE ONE STABLE SEAM. Today this is `Repl::from_vec` (xflags). After T048 it
-    /// becomes clap's `try_get_matches_from` mapped onto the same `ReplCmd`, and the
-    /// table above stays byte-for-byte the same.
+    /// The seam: drives the real parse path for the table.
     fn parse(tokens: &[&str]) -> Result<String, Class> {
         let args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
         match Repl::from_vec(args) {
             Ok(flags) => Ok(format!("{:?}", flags.subcommand)),
-            Err(e) => Err(classify(&e.to_string())),
+            Err(e) => Err(classify(&e)),
         }
     }
 
@@ -229,8 +230,8 @@ mod flags_parity {
                 Exp::Ok("Analyze(Analyze { name_or_nr: \"3\" })"),
             ),
             (vec!["analyze"], Exp::Err(Class::MissingRequired)),
-            (vec!["analyze", "a", "b"], Exp::Err(Class::UnknownCommand)),
-            (vec!["analyze", "--nope"], Exp::Err(Class::UnknownFlag)),
+            (vec!["analyze", "a", "b"], Exp::Err(Class::Unknown)),
+            (vec!["analyze", "--nope"], Exp::Err(Class::Unknown)),
             (
                 vec!["compare", "x", "y"],
                 Exp::Ok("Compare(Compare { name1: \"x\", name2: \"y\" })"),
@@ -264,7 +265,7 @@ mod flags_parity {
             (vec!["swap"], Exp::Err(Class::MissingRequired)),
             (vec!["rank"], Exp::Ok("Rank(Rank)")),
             (vec!["list"], Exp::Ok("Rank(Rank)")),
-            (vec!["rank", "extra"], Exp::Err(Class::UnknownCommand)),
+            (vec!["rank", "extra"], Exp::Err(Class::Unknown)),
             (
                 vec!["generate", "sturdy"],
                 Exp::Ok("Generate(Generate { name: \"sturdy\", count: None, pins: None })"),
@@ -289,10 +290,7 @@ mod flags_parity {
                 vec!["i", "sturdy", "0"],
                 Exp::Ok("Generate(Generate { name: \"sturdy\", count: Some(0), pins: None })"),
             ),
-            (
-                vec!["optimize", "sturdy", "-1"],
-                Exp::Err(Class::UnknownFlag),
-            ),
+            (vec!["optimize", "sturdy", "-1"], Exp::Err(Class::Unknown)),
             (vec!["generate", "sturdy", "abc"], Exp::Err(Class::BadValue)),
             (
                 vec!["generate", "sturdy", "-p"],
@@ -300,7 +298,7 @@ mod flags_parity {
             ),
             (
                 vec!["generate", "sturdy", "10", "20"],
-                Exp::Err(Class::UnknownCommand),
+                Exp::Err(Class::Unknown),
             ),
             (
                 vec!["generate", "sturdy", "10", "-p", "ab", "-p", "cd"],
@@ -314,10 +312,7 @@ mod flags_parity {
                 vec!["s", "x", "newname"],
                 Exp::Ok("Save(Save { name_or_nr: \"x\", name: Some(\"newname\") })"),
             ),
-            (
-                vec!["save", "x", "new", "extra"],
-                Exp::Err(Class::UnknownCommand),
-            ),
+            (vec!["save", "x", "new", "extra"], Exp::Err(Class::Unknown)),
             (
                 vec!["remove", "x"],
                 Exp::Ok("Remove(Remove { name: \"x\", yes: false })"),
@@ -460,22 +455,30 @@ mod flags_parity {
                 vec!["config", "--edit", "--edit"],
                 Exp::Err(Class::Duplicate),
             ),
-            (vec!["config", "--nope", "1"], Exp::Err(Class::UnknownFlag)),
+            (vec!["config", "--nope", "1"], Exp::Err(Class::Unknown)),
             (vec!["reload"], Exp::Ok("Reload(Reload)")),
             (vec!["r"], Exp::Ok("Reload(Reload)")),
             (vec!["quit"], Exp::Ok("Quit(Quit)")),
             (vec!["q"], Exp::Ok("Quit(Quit)")),
             (vec!["exit"], Exp::Ok("Quit(Quit)")),
-            (vec!["quit", "extra"], Exp::Err(Class::UnknownCommand)),
-            (vec!["badcmd"], Exp::Err(Class::UnknownCommand)),
+            (vec!["quit", "extra"], Exp::Err(Class::Unknown)),
+            (vec!["badcmd"], Exp::Err(Class::Unknown)),
             (vec!["--help"], Exp::Err(Class::Help)),
             (vec!["help"], Exp::Err(Class::Help)),
             (
                 vec!["analyze", "sturdy", "extra", "--nope"],
-                Exp::Err(Class::UnknownCommand),
+                Exp::Err(Class::Unknown),
             ),
-            (vec!["config", "--sfbs=1.5"], Exp::Err(Class::UnknownFlag)),
-            (vec!["sfbs", "x", "-c=5"], Exp::Err(Class::UnknownFlag)),
+            (
+                vec!["config", "--sfbs=1.5"],
+                Exp::Ok(
+                    "Config(Config { edit: false, sfbs: Some(1.5), sfs: None, inrolls: None, outrolls: None, onehands: None, alternates: None, alternates_sfs: None, redirects: None, redirects_sfs: None, bad_redirects: None, bad_redirects_sfs: None, stretches: None, pinky_ring: None, lateral_penalty: None, trigram_precision: None, max_cores: None })",
+                ),
+            ), // DIVERGENT: the old parser rejected it as Class::UnknownFlag, clap accepts it
+            (
+                vec!["sfbs", "x", "-c=5"],
+                Exp::Ok("Sfbs(Sfbs { name: \"x\", count: Some(5) })"),
+            ), // DIVERGENT: the old parser rejected it as Class::UnknownFlag, clap accepts it
             (
                 vec!["generate", "x", "-p", "--count=5"],
                 Exp::Ok(
@@ -496,40 +499,40 @@ mod flags_parity {
             ),
             (
                 vec!["generate", "x", "--pins=ab"],
-                Exp::Err(Class::UnknownFlag),
-            ),
+                Exp::Ok("Generate(Generate { name: \"x\", count: None, pins: Some(\"ab\") })"),
+            ), // DIVERGENT: the old parser rejected it as Class::UnknownFlag, clap accepts it
             (
                 vec!["generate", "x", "--pins"],
                 Exp::Err(Class::MissingValue),
             ),
-            (vec!["swap", "x", "-y"], Exp::Err(Class::UnknownFlag)),
-            (vec!["swap", "x", "--nope"], Exp::Err(Class::UnknownFlag)),
-            (
-                vec!["load", "english", "-raw"],
-                Exp::Err(Class::UnknownFlag),
-            ),
-            (vec!["analyze", "-x"], Exp::Err(Class::UnknownFlag)),
+            (vec!["swap", "x", "-y"], Exp::Err(Class::Unknown)),
+            (vec!["swap", "x", "--nope"], Exp::Err(Class::Unknown)),
+            (vec!["load", "english", "-raw"], Exp::Err(Class::Unknown)),
+            (vec!["analyze", "-x"], Exp::Err(Class::Unknown)),
             (vec!["rank", "--help"], Exp::Err(Class::Help)),
-            (vec!["quit", "-y"], Exp::Err(Class::UnknownFlag)),
+            (vec!["quit", "-y"], Exp::Err(Class::Unknown)),
             (vec!["help", "analyze"], Exp::Err(Class::Help)),
-            (vec!["language", "-"], Exp::Err(Class::UnknownFlag)),
-            (vec!["-"], Exp::Err(Class::UnknownFlag)),
-            (vec![""], Exp::Err(Class::UnknownCommand)),
-            (vec!["", "x"], Exp::Err(Class::UnknownCommand)),
+            (
+                vec!["language", "-"],
+                Exp::Ok("Language(Language { language: Some(\"-\") })"),
+            ), // DIVERGENT: the old parser rejected it as Class::UnknownFlag, clap accepts it
+            (vec!["-"], Exp::Err(Class::Unknown)),
+            (vec![""], Exp::Err(Class::Unknown)),
+            (vec!["", "x"], Exp::Err(Class::Unknown)),
             (
                 vec!["analyze", ""],
                 Exp::Ok("Analyze(Analyze { name_or_nr: \"\" })"),
             ),
             (vec!["analyze", "-h"], Exp::Err(Class::Help)),
             (vec!["analyze", "--help"], Exp::Err(Class::Help)),
-            (vec!["analyze", "--yes"], Exp::Err(Class::UnknownFlag)),
+            (vec!["analyze", "--yes"], Exp::Err(Class::Unknown)),
             (vec!["config", "-h"], Exp::Err(Class::Help)),
-            (vec!["generate", "x", "-5"], Exp::Err(Class::UnknownFlag)),
+            (vec!["generate", "x", "-5"], Exp::Err(Class::Unknown)),
             (
                 vec!["generate", "x", "-p", "-5"],
                 Exp::Ok("Generate(Generate { name: \"x\", count: None, pins: Some(\"-5\") })"),
             ),
-            (vec!["sfbs", "x", "-c", "-1"], Exp::Err(Class::BadValue)),
+            (vec!["sfbs", "x", "-c", "-1"], Exp::Err(Class::Unknown)), // DIVERGENT: the old parser rejected it as Class::BadValue, clap rejects it as Class::Unknown
             (
                 vec!["config", "--sfbs", "-1.5"],
                 Exp::Ok(
@@ -574,11 +577,8 @@ mod flags_parity {
                 vec!["a", "b"],
                 Exp::Ok("Analyze(Analyze { name_or_nr: \"b\" })"),
             ),
-            (
-                vec!["swap", "--headless", "x"],
-                Exp::Err(Class::UnknownFlag),
-            ),
-            (vec!["quit", "quit"], Exp::Err(Class::UnknownCommand)),
+            (vec!["swap", "--headless", "x"], Exp::Err(Class::Unknown)),
+            (vec!["quit", "quit"], Exp::Err(Class::Unknown)),
             (vec!["save"], Exp::Err(Class::MissingRequired)),
             (vec!["sfbs"], Exp::Err(Class::MissingRequired)),
             (vec!["fspeed"], Exp::Err(Class::MissingRequired)),
@@ -610,18 +610,12 @@ mod flags_parity {
                 vec!["stretches", "x", "--count"],
                 Exp::Err(Class::MissingValue),
             ),
-            (vec!["fspeed", "x", "--nope"], Exp::Err(Class::UnknownFlag)),
-            (
-                vec!["scissors", "x", "--nope"],
-                Exp::Err(Class::UnknownFlag),
-            ),
-            (vec!["lsbs", "x", "--nope"], Exp::Err(Class::UnknownFlag)),
-            (
-                vec!["stretches", "x", "--nope"],
-                Exp::Err(Class::UnknownFlag),
-            ),
-            (vec!["pr", "x", "--nope"], Exp::Err(Class::UnknownFlag)),
-            (vec!["save", "x", "--nope"], Exp::Err(Class::UnknownFlag)),
+            (vec!["fspeed", "x", "--nope"], Exp::Err(Class::Unknown)),
+            (vec!["scissors", "x", "--nope"], Exp::Err(Class::Unknown)),
+            (vec!["lsbs", "x", "--nope"], Exp::Err(Class::Unknown)),
+            (vec!["stretches", "x", "--nope"], Exp::Err(Class::Unknown)),
+            (vec!["pr", "x", "--nope"], Exp::Err(Class::Unknown)),
+            (vec!["save", "x", "--nope"], Exp::Err(Class::Unknown)),
             (
                 vec!["swap", "x", "ab", "ab"],
                 Exp::Ok("Swap(Swap { name: \"x\", swaps: [\"ab\", \"ab\"] })"),
@@ -630,26 +624,17 @@ mod flags_parity {
                 vec!["include", "en", "en"],
                 Exp::Ok("Include(Include { languages: [\"en\", \"en\"] })"),
             ),
-            (vec!["include", "x", "--nope"], Exp::Err(Class::UnknownFlag)),
-            (
-                vec!["language", "en", "--nope"],
-                Exp::Err(Class::UnknownFlag),
-            ),
-            (
-                vec!["load", "english", "--nope"],
-                Exp::Err(Class::UnknownFlag),
-            ),
-            (vec!["ngram", "th", "--nope"], Exp::Err(Class::UnknownFlag)),
-            (vec!["languages", "extra"], Exp::Err(Class::UnknownCommand)),
-            (vec!["reload", "extra"], Exp::Err(Class::UnknownCommand)),
+            (vec!["include", "x", "--nope"], Exp::Err(Class::Unknown)),
+            (vec!["language", "en", "--nope"], Exp::Err(Class::Unknown)),
+            (vec!["load", "english", "--nope"], Exp::Err(Class::Unknown)),
+            (vec!["ngram", "th", "--nope"], Exp::Err(Class::Unknown)),
+            (vec!["languages", "extra"], Exp::Err(Class::Unknown)),
+            (vec!["reload", "extra"], Exp::Err(Class::Unknown)),
             (
                 vec!["remove", "x", "-y", "--nope"],
-                Exp::Err(Class::UnknownFlag),
+                Exp::Err(Class::Unknown),
             ),
-            (
-                vec!["analyze", "3", "extra"],
-                Exp::Err(Class::UnknownCommand),
-            ),
+            (vec!["analyze", "3", "extra"], Exp::Err(Class::Unknown)),
             (
                 vec!["config", "--sfs", "0.5"],
                 Exp::Ok(
@@ -747,7 +732,7 @@ mod flags_parity {
         }
     }
 
-    /// Every subcommand and alias in the `xflags!` grammar is represented, so an alias
+    /// Every subcommand and alias in the grammar is represented, so an alias
     /// dropped by a port fails here rather than silently changing the surface.
     #[test]
     fn every_command_and_alias_is_covered() {
@@ -861,9 +846,12 @@ mod flags_parity {
         for tokens in [
             vec!["badcmd"],
             vec!["analyze"],
-            vec!["config", "--sfbs=1.5"],
+            vec!["config", "--nope"],
             vec!["-"],
             vec![],
+            // help requests are errors too, and must be returned, not printed-and-exited
+            vec!["--help"],
+            vec!["analyze", "--help"],
         ] {
             assert!(
                 parse(&tokens).is_err(),

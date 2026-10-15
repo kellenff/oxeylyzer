@@ -95,7 +95,7 @@ pub enum ReplError {
     #[error(transparent)]
     FmtError(#[from] std::fmt::Error),
     #[error(transparent)]
-    XflagsError(#[from] xflags::Error),
+    ClapError(#[from] clap::Error),
     #[error(transparent)]
     OxeylyzerError(#[from] OxeylyzerError),
     #[error(transparent)]

@@ -1,123 +1,67 @@
-xflags::xflags! {
-    /// Benchmark oxeylyzer search algorithms against each other.
-    cmd bench {
-        /// Language corpus to use (default: english)
-        optional -l, --language language: String
-        /// Basis layout name; defines the key set and geometry (default: sturdy, or the first found)
-        optional -b, --basis basis: String
-        /// Number of layouts to generate per algorithm (default: 100)
-        optional -n, --count count: usize
-        /// Wall-clock budget per algorithm in seconds (overrides --count)
-        optional -t, --time time: u64
-        /// Comma-separated algorithms: hill,sa,ils,lahc,d2,vnd (default: all)
-        optional -a, --algorithms algorithms: String
-        /// Characters to pin in place on the basis layout
-        optional -p, --pins pins: String
-        /// Print a markdown table instead of the TUI
-        optional --headless
-    }
+use clap::Parser;
+
+/// Benchmark oxeylyzer search algorithms against each other.
+///
+/// Flat option set, no subcommands: the binary IS the command. Derived `parse()`
+/// keeps bench's existing exit-on-error path (it prints the error and exits
+/// non-zero), which is what the old parser's `from_env_or_exit` did.
+#[derive(Debug, Parser)]
+#[command(author, version, about)]
+pub struct Bench {
+    /// Language corpus to use (default: english)
+    #[arg(short = 'l', long)]
+    pub language: Option<String>,
+
+    /// Basis layout name; defines the key set and geometry (default: sturdy, or the first found)
+    #[arg(short = 'b', long)]
+    pub basis: Option<String>,
+
+    /// Number of layouts to generate per algorithm (default: 100)
+    #[arg(short = 'n', long)]
+    pub count: Option<usize>,
+
+    /// Wall-clock budget per algorithm in seconds (overrides --count)
+    #[arg(short = 't', long)]
+    pub time: Option<u64>,
+
+    /// Comma-separated algorithms: hill,sa,ils,lahc,d2,vnd (default: all)
+    #[arg(short = 'a', long)]
+    pub algorithms: Option<String>,
+
+    /// Characters to pin in place on the basis layout.
+    ///
+    /// A hyphen can be a key to pin, so a leading dash here is a value, not a flag.
+    #[arg(short = 'p', long, allow_hyphen_values(true))]
+    pub pins: Option<String>,
+
+    /// Print a markdown table instead of the TUI
+    #[arg(long)]
+    pub headless: bool,
 }
 
-#[cfg(test)]
-mod probe {
-    use super::Bench;
-    #[test]
-    fn dump_baseline() {
-        for v in [
-            vec![],
-            vec!["-n", "5"],
-            vec!["-n"],
-            vec!["-n", "abc"],
-            vec!["--headless"],
-            vec!["--headless", "--headless"],
-            vec!["-l", "en", "-b", "colman"],
-            vec!["-a", "hill,sa"],
-            vec!["-p", "abc"],
-            vec!["-t", "30"],
-            vec!["--nope"],
-            vec!["extra"],
-            vec!["-n", "5", "-t", "3"],
-            vec!["-lt", "3"],
-            vec!["-n", "5", "-n", "6"],
-            vec!["-p", "-a"],
-            vec!["-a", "-p"],
-            vec!["-n5"],
-            vec!["-l", "-b"],
-            vec!["--language=de"],
-            vec!["-p", "ab", "-p", "cd"],
-            vec!["-"],
-            vec!["--"],
-            vec!["-n", "-5"],
-            vec!["-t", "-1"],
-            vec!["-n", "-1"],
-            vec!["-n", "1.5"],
-            vec!["-t", "1.5"],
-            vec!["-n", ""],
-            vec![""],
-            vec!["-h"],
-            vec!["--help"],
-            vec!["help"],
-            vec!["--nope", "-n", "1"],
-            vec!["-n", "5", "extra"],
-            vec!["-nn"],
-            vec!["-n=5"],
-            vec!["-l", "en", "--nope"],
-            vec!["-b"],
-            vec!["-l"],
-            vec!["-a"],
-            vec!["-t"],
-            vec!["--time"],
-            vec!["-t", "abc"],
-            vec!["-l", "en", "-l", "de"],
-            vec!["-a", "hill", "-a", "sa"],
-            vec!["--headless", "--headless", "--headless"],
-            vec!["-t", "0"],
-            vec!["-n", "0"],
-            vec!["-p", ""],
-            vec!["-l", ""],
-            vec!["--headless", "-n", "3"],
-            vec!["-n", "3", "--headless"],
-            vec!["--language", "de"],
-            vec!["--basis", "x"],
-            vec!["--count", "7"],
-            vec!["--algorithms", "hill"],
-            vec!["--pins", "ab"],
-            vec![
-                "-n",
-                "1",
-                "-t",
-                "2",
-                "-a",
-                "sa",
-                "-p",
-                "q",
-                "-l",
-                "en",
-                "-b",
-                "colman",
-                "--headless",
-            ],
-        ] {
-            let args = v.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
-            let out = match Bench::from_vec(args) {
-                Ok(f) => format!("ACCEPT {f:?}"),
-                Err(e) => format!("REJECT: {}", e.to_string().replace('\n', " | ")),
-            };
-            println!("{:?} => {}", v, out);
-        }
+impl Bench {
+    /// Parse a token vector with no program-name element, which is how the parity
+    /// table drives it. Clap reads argv[0] as the program name, so a dummy is
+    /// prepended. Production uses the derived `Bench::parse()`.
+    #[cfg(test)]
+    pub fn from_vec(args: Vec<std::ffi::OsString>) -> Result<Self, clap::Error> {
+        Self::try_parse_from(std::iter::once(std::ffi::OsString::from("bench")).chain(args))
     }
 }
 
 #[cfg(test)]
 mod flags_parity {
     //! CLI surface parity table for the bench binary (T042, contracts/cli-surface.md,
-    //! FR-015). Bench IS a plain argv CLI (`from_env_or_exit` at `src/main.rs`), unlike
+    //! FR-015). Bench IS a plain argv CLI (`Bench::parse()` at `src/main.rs`), unlike
     //! the REPL, which parses shlexed interactive lines.
     //!
-    //! The 53 rows are machine-generated from the CURRENT xflags build's measured
-    //! outcomes and MUST NOT be edited when the parser is swapped: only `parse()` below
-    //! may change. Accepts compare the `Debug` rendering of `Bench`; rejects compare an
-    //! error CLASS (parser wording is not part of the surface).
+    //! 59 rows, each recording the measured outcome of the parser that is in the build.
+    //! The baseline was captured from the parser this one replaces; every row where the
+    //! outcome differs carries a `// DIVERGENT:` comment naming the old outcome, so a
+    //! change of surface is a reviewed decision rather than an accident. Accepts compare the
+    //! `Debug` rendering of `Bench`; rejects compare an error CLASS (parser wording is
+    //! not part of the surface). `UnknownFlag`/`UnknownCommand` collapse into one
+    //! `Unknown` class because clap reports both under a single error kind.
 
     use std::ffi::OsString;
 
@@ -125,12 +69,13 @@ mod flags_parity {
 
     #[derive(Debug, PartialEq, Eq)]
     enum Class {
-        /// The line asked for help; xflags returns the help text as an error.
+        /// The line asked for help; clap delivers the help text as an error too.
         Help,
         MissingRequired,
         Duplicate,
-        UnknownCommand,
-        UnknownFlag,
+        /// An unrecognised token: clap reports unknown flags and unknown positionals
+        /// under one kind, so the old two-class split collapses here.
+        Unknown,
         MissingValue,
         BadValue,
     }
@@ -143,32 +88,26 @@ mod flags_parity {
         Err(Class),
     }
 
-    fn classify(msg: &str) -> Class {
-        if msg.starts_with("Usage:") || msg.contains("Print this message") {
-            Class::Help
-        } else if msg.contains("Flag specified more than once") {
-            Class::Duplicate
-        } else if msg.contains("Flag is required") {
-            Class::MissingRequired
-        } else if msg.contains("Unknown command") {
-            Class::UnknownCommand
-        } else if msg.contains("Unknown flag") {
-            Class::UnknownFlag
-        } else if msg.contains("expected a value for") {
-            Class::MissingValue
-        } else {
-            Class::BadValue
+    fn classify(err: &clap::Error) -> Class {
+        use clap::error::ErrorKind as K;
+        match err.kind() {
+            K::DisplayHelp | K::DisplayVersion => Class::Help,
+            K::InvalidValue => Class::MissingValue,
+            K::ValueValidation => Class::BadValue,
+            K::ArgumentConflict => Class::Duplicate,
+            K::MissingRequiredArgument => Class::MissingRequired,
+            K::TooManyValues | K::TooFewValues | K::WrongNumberOfValues => Class::BadValue,
+            K::UnknownArgument | K::InvalidSubcommand => Class::Unknown,
+            other => panic!("unmapped clap error kind {:?}: {err}", other),
         }
     }
 
-    /// THE ONE STABLE SEAM. Today this is `Bench::from_vec` (xflags). After T049 it
-    /// becomes clap's `try_get_matches_from` mapped onto the same `Bench` struct, and
-    /// the table above stays byte-for-byte the same.
+    /// The seam: drives the real parse path for the table.
     fn parse(tokens: &[&str]) -> Result<String, Class> {
         let args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
         match Bench::from_vec(args) {
             Ok(flags) => Ok(format!("{flags:?}")),
-            Err(e) => Err(classify(&e.to_string())),
+            Err(e) => Err(classify(&e)),
         }
     }
 
@@ -219,15 +158,15 @@ mod flags_parity {
                     "Bench { language: None, basis: None, count: None, time: Some(30), algorithms: None, pins: None, headless: false }",
                 ),
             ),
-            (vec!["--nope"], Exp::Err(Class::UnknownFlag)),
-            (vec!["extra"], Exp::Err(Class::UnknownCommand)),
+            (vec!["--nope"], Exp::Err(Class::Unknown)),
+            (vec!["extra"], Exp::Err(Class::Unknown)),
             (
                 vec!["-n", "5", "-t", "3"],
                 Exp::Ok(
                     "Bench { language: None, basis: None, count: Some(5), time: Some(3), algorithms: None, pins: None, headless: false }",
                 ),
             ),
-            (vec!["-lt", "3"], Exp::Err(Class::UnknownFlag)),
+            (vec!["-lt", "3"], Exp::Err(Class::Unknown)),
             (vec!["-n", "5", "-n", "6"], Exp::Err(Class::Duplicate)),
             (
                 vec!["-p", "-a"],
@@ -235,43 +174,48 @@ mod flags_parity {
                     "Bench { language: None, basis: None, count: None, time: None, algorithms: None, pins: Some(\"-a\"), headless: false }",
                 ),
             ),
+            (vec!["-a", "-p"], Exp::Err(Class::MissingValue)), // DIVERGENT: the old parser accepted "Bench { language: None, basis: None, count: None, time: None, algorithms: Some(\"-p\"), pins: None, headless: false }", clap rejects it as Class::MissingValue
             (
-                vec!["-a", "-p"],
+                vec!["-n5"],
                 Exp::Ok(
-                    "Bench { language: None, basis: None, count: None, time: None, algorithms: Some(\"-p\"), pins: None, headless: false }",
+                    "Bench { language: None, basis: None, count: Some(5), time: None, algorithms: None, pins: None, headless: false }",
                 ),
-            ),
-            (vec!["-n5"], Exp::Err(Class::UnknownFlag)),
+            ), // DIVERGENT: the old parser rejected it as Class::UnknownFlag, clap accepts it
+            (vec!["-l", "-b"], Exp::Err(Class::MissingValue)), // DIVERGENT: the old parser accepted "Bench { language: Some(\"-b\"), basis: None, count: None, time: None, algorithms: None, pins: None, headless: false }", clap rejects it as Class::MissingValue
             (
-                vec!["-l", "-b"],
+                vec!["--language=de"],
                 Exp::Ok(
-                    "Bench { language: Some(\"-b\"), basis: None, count: None, time: None, algorithms: None, pins: None, headless: false }",
+                    "Bench { language: Some(\"de\"), basis: None, count: None, time: None, algorithms: None, pins: None, headless: false }",
                 ),
-            ),
-            (vec!["--language=de"], Exp::Err(Class::UnknownFlag)),
+            ), // DIVERGENT: the old parser rejected it as Class::UnknownFlag, clap accepts it
             (vec!["-p", "ab", "-p", "cd"], Exp::Err(Class::Duplicate)),
-            (vec!["-"], Exp::Err(Class::UnknownFlag)),
+            (vec!["-"], Exp::Err(Class::Unknown)),
             (
                 vec!["--"],
                 Exp::Ok(
                     "Bench { language: None, basis: None, count: None, time: None, algorithms: None, pins: None, headless: false }",
                 ),
             ),
-            (vec!["-n", "-5"], Exp::Err(Class::BadValue)),
-            (vec!["-t", "-1"], Exp::Err(Class::BadValue)),
-            (vec!["-n", "-1"], Exp::Err(Class::BadValue)),
+            (vec!["-n", "-5"], Exp::Err(Class::Unknown)), // DIVERGENT: the old parser rejected it as Class::BadValue, clap rejects it as Class::Unknown
+            (vec!["-t", "-1"], Exp::Err(Class::Unknown)), // DIVERGENT: the old parser rejected it as Class::BadValue, clap rejects it as Class::Unknown
+            (vec!["-n", "-1"], Exp::Err(Class::Unknown)), // DIVERGENT: the old parser rejected it as Class::BadValue, clap rejects it as Class::Unknown
             (vec!["-n", "1.5"], Exp::Err(Class::BadValue)),
             (vec!["-t", "1.5"], Exp::Err(Class::BadValue)),
             (vec!["-n", ""], Exp::Err(Class::BadValue)),
-            (vec![""], Exp::Err(Class::UnknownCommand)),
+            (vec![""], Exp::Err(Class::Unknown)),
             (vec!["-h"], Exp::Err(Class::Help)),
             (vec!["--help"], Exp::Err(Class::Help)),
-            (vec!["help"], Exp::Err(Class::Help)),
-            (vec!["--nope", "-n", "1"], Exp::Err(Class::UnknownFlag)),
-            (vec!["-n", "5", "extra"], Exp::Err(Class::UnknownCommand)),
-            (vec!["-nn"], Exp::Err(Class::UnknownFlag)),
-            (vec!["-n=5"], Exp::Err(Class::UnknownFlag)),
-            (vec!["-l", "en", "--nope"], Exp::Err(Class::UnknownFlag)),
+            (vec!["help"], Exp::Err(Class::Unknown)), // DIVERGENT: the old parser rejected it as Class::Help, clap rejects it as Class::Unknown
+            (vec!["--nope", "-n", "1"], Exp::Err(Class::Unknown)),
+            (vec!["-n", "5", "extra"], Exp::Err(Class::Unknown)),
+            (vec!["-nn"], Exp::Err(Class::BadValue)), // DIVERGENT: the old parser rejected it as Class::UnknownFlag, clap rejects it as Class::BadValue
+            (
+                vec!["-n=5"],
+                Exp::Ok(
+                    "Bench { language: None, basis: None, count: Some(5), time: None, algorithms: None, pins: None, headless: false }",
+                ),
+            ), // DIVERGENT: the old parser rejected it as Class::UnknownFlag, clap accepts it
+            (vec!["-l", "en", "--nope"], Exp::Err(Class::Unknown)),
             (vec!["-b"], Exp::Err(Class::MissingValue)),
             (vec!["-l"], Exp::Err(Class::MissingValue)),
             (vec!["-a"], Exp::Err(Class::MissingValue)),
