@@ -26,10 +26,8 @@ sliding_window_alt = "0.1.2"
 thiserror = { workspace = true }
 serde_with = { workspace = true }
 fxhash = "0.2"
-num_cpus = "1.17"
 
 [dev-dependencies]
 time_this = "0"
 approx = "0"
 fancy-regex = "0.19"
-once_cell = { workspace = true }

@@ -1069,9 +1069,9 @@ mod tests {
     use crate::{data::Data, generate::Oxeylyzer, layout::Layout, weights::Config};
 
     use super::*;
-    use once_cell::sync::Lazy;
+    use std::sync::LazyLock;
 
-    static GEN: Lazy<Oxeylyzer> = Lazy::new(|| {
+    static GEN: LazyLock<Oxeylyzer> = LazyLock::new(|| {
         let base = PathBuf::from(concat!(std::env!("CARGO_MANIFEST_DIR"), "/.."));
         let config = Config::with_loaded_weights(base.join("config.toml")).unwrap();
         let data = Data::load(base.join(&config.corpus)).unwrap();
@@ -1142,7 +1142,7 @@ mod tests {
         assert_eq!(auto_name(&keys, &Shape::from(vec![99, 99]), mapping), "");
     }
 
-    static QWERTY: Lazy<FastLayout> = Lazy::new(|| {
+    static QWERTY: LazyLock<FastLayout> = LazyLock::new(|| {
         let dof_str = r#"
             {
                 "name": "Qwerty",

@@ -1183,17 +1183,17 @@ pub fn is_md5_hash(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use once_cell::sync::Lazy;
+    use std::sync::LazyLock;
 
     use super::*;
 
-    static REPL: Lazy<Repl> = Lazy::new(|| {
+    static REPL: LazyLock<Repl> = LazyLock::new(|| {
         let dirs =
             OxeylyzerDirs::with_override(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."));
         Repl::new(dirs).unwrap()
     });
 
-    static QWERTY: Lazy<FastLayout> = Lazy::new(|| {
+    static QWERTY: LazyLock<FastLayout> = LazyLock::new(|| {
         let dof_str = r#"
             {
                 "name": "Qwerty",

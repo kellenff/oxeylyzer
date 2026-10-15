@@ -1118,11 +1118,11 @@ pub(crate) mod test_util;
 mod tests {
     use super::*;
 
-    use once_cell::sync::Lazy;
     use rayon::iter::ParallelIterator;
+    use std::sync::LazyLock;
     use std::{collections::HashSet, path::PathBuf, sync::atomic::Ordering};
 
-    static GEN: Lazy<Oxeylyzer> = Lazy::new(|| {
+    static GEN: LazyLock<Oxeylyzer> = LazyLock::new(|| {
         let base = PathBuf::from(concat!(std::env!("CARGO_MANIFEST_DIR"), "/.."));
         let config = Config::with_loaded_weights(base.join("config.toml")).unwrap();
         let data = Data::load(base.join(&config.corpus)).unwrap();
@@ -1130,7 +1130,7 @@ mod tests {
         Oxeylyzer::new(data, config)
     });
 
-    static QWERTY: Lazy<FastLayout> = Lazy::new(|| {
+    static QWERTY: LazyLock<FastLayout> = LazyLock::new(|| {
         let dof_str = r#"
             {
                 "name": "Qwerty",
