@@ -10,7 +10,6 @@ oxeylyzer-core = { path = "../oxeylyzer-core" }
 oxeylyzer-resources = { path = "../oxeylyzer-resources" }
 shlex = "2"
 indicatif = { version = "0.18", features = ["rayon"] }
-ansi_rgb = { git = "https://github.com/O-X-E-Y/ansi_rgb" }
 indexmap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
