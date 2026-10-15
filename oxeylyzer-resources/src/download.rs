@@ -74,8 +74,16 @@ where
 ///
 /// Applied to the raw archive name after [`ZIP_INNER_PREFIX`] is stripped: the
 /// prefix banks one level of depth, so a single `../` spent on it must not read as
-/// in-bounds. Absolute paths, drive prefixes, NUL bytes, and any `..` that would
-/// climb out of the root are refused.
+/// in-bounds. Absolute paths and any `..` that would climb out of the root are
+/// refused; NUL bytes are refused by the caller, since `Path` swallows them.
+///
+/// The `Prefix` arm is the drive-prefix case (`C:/Windows/...`) and is
+/// **host-dependent**: `Component::Prefix` only exists when compiling for Windows.
+/// On Unix such a name decomposes to ordinary components and lands inside the
+/// destination under a literal `C:` directory, so it is contained either way. That
+/// is why there is no portable test for this case — the existing tests assert the
+/// invariant that matters (nothing lands outside the destination), and on Windows
+/// this arm refuses it outright.
 fn is_contained(rel: &str) -> bool {
     let mut depth = 0usize;
     for component in Path::new(rel).components() {
