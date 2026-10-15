@@ -5,6 +5,13 @@
 # version and the hold is recorded here. The freshness step reads this file and
 # reports those crates "held (recorded)" instead of "behind" — never silent.
 #
+# The same file records FRONTEND holds (npm packages in oxeylyzer-tauri/package.json,
+# e.g. a plugin that cannot follow vite's Rolldown migration, or a linter chain that
+# cannot support the current TypeScript). `crate` is the npm package name; the
+# freshness step matches it against package.json and reports "held (recorded)" the
+# same way. There is no `required_rust` for those — the reason field carries the
+# blocker, and the hold goes stale when the range can reach latest again.
+#
 # Fields per [[hold]] entry:
 #   crate         — dependency name being held
 #   held          — version actually resolved in Cargo.lock
