@@ -290,8 +290,8 @@ where {
 
         let possible_swaps = (0..(matrix.len() as u8))
             .filter(|v| !pins.contains(&(*v as usize)))
-            .tuple_combinations::<(_, _)>()
-            .map(Into::into)
+            .array_combinations::<2>()
+            .map(|[a, b]| PosPair::from((a, b)))
             .collect();
 
         let mut char_to_finger = Box::new([None; 60]);
@@ -495,9 +495,11 @@ where {
         freqs
     }
 
-    /// Calculates the total score for a given layout.
+    /// The search objective for a given layout: stretch included, trigrams truncated at
+    /// `self.trigram_precision`, identical to `initialize_cache(layout).total_score()` —
+    /// the standard the optimizer maximizes and every ranking surface must sort by.
     ///
-    /// Higher scores generally indicate better layouts according to the weights.
+    /// Higher scores indicate better layouts according to the weights.
     ///
     /// # Examples:
     /// ```
@@ -516,15 +518,7 @@ where {
         #[cfg(test)]
         ANALYZED_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        let fspeed_usage = Finger::FINGERS
-            .into_iter()
-            .map(|f| self.finger_usage(layout, f) + self.finger_fspeed(layout, f))
-            .sum::<i64>();
-
-        let pinky_ring = self.pinky_ring_score(layout);
-        let trigram_score = self.trigram_score_iter(layout, self.data.gen_trigrams());
-
-        trigram_score + fspeed_usage + pinky_ring
+        self.score_with_precision(layout, self.trigram_precision)
     }
 
     /// Calculates the total score for a given layout.
@@ -699,6 +693,24 @@ where {
             .sum()
     }
 
+    /// The threshold share of the corpus total above which a finger is penalised.
+    fn max_finger_use_threshold(&self, finger: Finger) -> i64 {
+        let m = &self.weights.max_finger_use;
+        match finger {
+            Finger::LP | Finger::RP => m.pinky,
+            Finger::LR | Finger::RR => m.ring,
+            Finger::LM | Finger::RM => m.middle,
+            Finger::LI | Finger::RI => m.index,
+            Finger::LT | Finger::RT => m.thumb,
+        }
+    }
+
+    /// Applies the over-use penalty to a finger's total character usage.
+    fn finger_usage_score(&self, finger: Finger, usage: i64) -> i64 {
+        self.weights.max_finger_use.penalty
+            * (usage - self.max_finger_use_threshold(finger) * self.data.char_total / 100)
+    }
+
     fn finger_usage(&self, layout: &FastLayout, finger: Finger) -> i64 {
         let usage = layout
             .usage_indices
@@ -707,25 +719,7 @@ where {
             .map(|&i| self.data.get_char_u(layout.keys[i]))
             .sum::<i64>();
 
-        self.weights.max_finger_use.penalty
-            * match finger {
-                Finger::LP | Finger::RP => {
-                    // TODO: optimize
-                    usage - self.weights.max_finger_use.pinky * self.data.char_total / 100
-                }
-                Finger::LR | Finger::RR => {
-                    usage - self.weights.max_finger_use.ring * self.data.char_total / 100
-                }
-                Finger::LM | Finger::RM => {
-                    usage - self.weights.max_finger_use.middle * self.data.char_total / 100
-                }
-                Finger::LI | Finger::RI => {
-                    usage - self.weights.max_finger_use.index * self.data.char_total / 100
-                }
-                Finger::LT | Finger::RT => {
-                    usage - self.weights.max_finger_use.thumb * self.data.char_total / 100
-                }
-            }
+        self.finger_usage_score(finger, usage)
     }
 
     /// Computes the same-finger bigram penalty for a pair.
@@ -1124,11 +1118,11 @@ pub(crate) mod test_util;
 mod tests {
     use super::*;
 
-    use once_cell::sync::Lazy;
     use rayon::iter::ParallelIterator;
+    use std::sync::LazyLock;
     use std::{collections::HashSet, path::PathBuf, sync::atomic::Ordering};
 
-    static GEN: Lazy<Oxeylyzer> = Lazy::new(|| {
+    static GEN: LazyLock<Oxeylyzer> = LazyLock::new(|| {
         let base = PathBuf::from(concat!(std::env!("CARGO_MANIFEST_DIR"), "/.."));
         let config = Config::with_loaded_weights(base.join("config.toml")).unwrap();
         let data = Data::load(base.join(&config.corpus)).unwrap();
@@ -1136,7 +1130,7 @@ mod tests {
         Oxeylyzer::new(data, config)
     });
 
-    static QWERTY: Lazy<FastLayout> = Lazy::new(|| {
+    static QWERTY: LazyLock<FastLayout> = LazyLock::new(|| {
         let dof_str = r#"
             {
                 "name": "Qwerty",
@@ -1248,24 +1242,141 @@ mod tests {
         }
     }
 
+    /// The displayed ranking standard must stay the search standard. `score()` once summed a
+    /// different formula — no stretch term and every trigram instead of the configured
+    /// precision — so the top-10 shown to a user was not the top-10 the optimizer produced.
+    /// Pins the identity on a fixed layout and after every swap of a sequence, so neither
+    /// standard can drift without failing here.
+    #[test]
+    fn score_matches_search_objective() {
+        assert_eq!(
+            GEN.score(&QWERTY),
+            GEN.initialize_cache(&QWERTY).total_score(),
+            "score() must equal the search objective",
+        );
+        assert_eq!(
+            GEN.score(&QWERTY),
+            GEN.score_with_precision(&QWERTY, GEN.trigram_precision),
+        );
+
+        let mut layout = QWERTY.clone();
+        let mut cache = GEN.initialize_cache(&layout);
+
+        for swap in QWERTY.possible_swaps.iter().take(200) {
+            GEN.accept_swap(&mut layout, swap, &mut cache);
+
+            assert_eq!(
+                GEN.score(&layout),
+                cache.total_score(),
+                "identity must hold after swap {:?}",
+                swap,
+            );
+        }
+    }
+
+    /// The extracted penalty must agree with the original inline expression for every
+    /// finger. Guards the refactor: scoring is compared as exact integers, so a change
+    /// in the arithmetic would silently change which layouts are considered better.
+    #[test]
+    fn finger_usage_score_matches_inline_expression() {
+        let qwerty = QWERTY.clone();
+        for finger in Finger::FINGERS {
+            let usage = qwerty
+                .usage_indices
+                .get(finger)
+                .iter()
+                .map(|&i| GEN.data.get_char_u(qwerty.keys[i]))
+                .sum::<i64>();
+
+            // The expression as it was written inline before being extracted.
+            let original = GEN.weights.max_finger_use.penalty
+                * match finger {
+                    Finger::LP | Finger::RP => {
+                        usage - GEN.weights.max_finger_use.pinky * GEN.data.char_total / 100
+                    }
+                    Finger::LR | Finger::RR => {
+                        usage - GEN.weights.max_finger_use.ring * GEN.data.char_total / 100
+                    }
+                    Finger::LM | Finger::RM => {
+                        usage - GEN.weights.max_finger_use.middle * GEN.data.char_total / 100
+                    }
+                    Finger::LI | Finger::RI => {
+                        usage - GEN.weights.max_finger_use.index * GEN.data.char_total / 100
+                    }
+                    Finger::LT | Finger::RT => {
+                        usage - GEN.weights.max_finger_use.thumb * GEN.data.char_total / 100
+                    }
+                };
+
+            assert_eq!(
+                GEN.finger_usage_score(finger, usage),
+                original,
+                "penalty mismatch for {finger:?}"
+            );
+        }
+    }
+
+    /// The cached and recomputed per-finger usage must agree before and after a swap.
+    #[test]
+    fn finger_usage_after_swap_matches_recompute() {
+        let mut qwerty = QWERTY.clone();
+        let _ = &mut qwerty;
+        let cache = GEN.initialize_cache(&qwerty);
+
+        for (i1, i2) in [(0u8, 12u8), (5, 7), (20, 25), (12, 13)] {
+            let before: Vec<i64> = Finger::FINGERS
+                .into_iter()
+                .map(|f| GEN.finger_usage(&qwerty, f))
+                .collect();
+
+            let swap = PosPair(i1, i2);
+            let (f1, f2) = {
+                qwerty.swap_pair(&swap).unwrap();
+                (qwerty.finger(i1).unwrap(), qwerty.finger(i2).unwrap())
+            };
+
+            let after: Vec<i64> = Finger::FINGERS
+                .into_iter()
+                .map(|f| GEN.finger_usage(&qwerty, f))
+                .collect();
+
+            for f in Finger::FINGERS {
+                // Only the two fingers holding the swapped keys may differ.
+                let expect_same = f != f1 && f != f2;
+                if expect_same {
+                    assert_eq!(before[f as usize], after[f as usize], "{f:?} changed");
+                }
+            }
+            // And the cache agreed with the recompute before the swap.
+            for f in Finger::FINGERS {
+                assert_eq!(cache.usage[f as usize], before[f as usize], "cache stale");
+            }
+        }
+    }
+
+    /// The cached and uncached paths must agree on both the best swap and its
+    /// score, including when neither finds an improvement. This is the only
+    /// independent check that the optimisation of `score_swap_cached` stayed
+    /// faithful: scoring is compared as exact integers, so a cached score that
+    /// drifts would silently change which layouts are considered better.
     #[test]
     fn best_found_swap() {
         let mut qwerty = QWERTY.clone();
         let cache = GEN.initialize_cache(&qwerty);
 
-        if let (Some(best_swap_normal), best_score_normal) =
-            GEN.best_swap(&mut qwerty, None, &QWERTY.possible_swaps)
-        {
-            if let (Some(best_swap_cached), best_score_cached) =
-                GEN.best_swap_cached(&mut qwerty, &cache, &QWERTY.possible_swaps, None)
-            {
-                if best_score_normal == best_score_cached {
-                    assert_eq!(best_swap_normal, best_swap_cached);
-                } else {
-                    println!("scores not the same")
-                }
-            }
-        }
+        let (best_swap_normal, best_score_normal) =
+            GEN.best_swap(&mut qwerty, None, &QWERTY.possible_swaps);
+        let (best_swap_cached, best_score_cached) =
+            GEN.best_swap_cached(&mut qwerty, &cache, &QWERTY.possible_swaps, None);
+
+        assert_eq!(
+            best_score_cached, best_score_normal,
+            "cached and uncached disagree on the best score",
+        );
+        assert_eq!(
+            best_swap_cached, best_swap_normal,
+            "cached and uncached disagree on the best swap",
+        );
     }
 
     #[test]
@@ -1282,7 +1393,7 @@ mod tests {
 
             if let Some(score_cached) = maybe_score_cached {
                 assert!(
-                    score_cached == SMALLEST_SCORE + 1000 || score_normal == score_cached,
+                    score_normal == score_cached,
                     "failed on iteration {i} for {}",
                     QWERTY.possible_swaps[i]
                 );

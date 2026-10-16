@@ -1,0 +1,143 @@
+analyzed_at: "2026-10-05T23:47:00Z"
+project_root: "/Users/kellen/Projects/oxeylyzer"
+total_features: 9
+completed: 7
+features:
+  - id: "archive-safety"
+    name: "Safe Data Archive Extraction"
+    description: "Refuse archive entries that would write outside the data directory, and stream the download instead of buffering the whole archive in memory."
+    files:
+      - "oxeylyzer-resources/src/download.rs"
+    status: done
+    current_phase: null
+    branch: "feature/time-machine-archive-safety"
+    pushed: false
+    started_at: "2026-10-05T23:52:38Z"
+    completed_at: "2026-10-06T00:04:32Z"
+  - id: "data-version-upgrade"
+    name: "Data File Version Upgrades"
+    description: "Compare the installed data version sentinel against the current version and re-download when data is stale, instead of only checking that the sentinel exists."
+    files:
+      - "oxeylyzer-resources/src/seed.rs"
+      - "oxeylyzer-resources/src/download.rs"
+      - "oxeylyzer-resources/src/dirs.rs"
+    status: done
+    current_phase: null
+    branch: "feature/time-machine-data-version-upgrade"
+    pushed: false
+    started_at: "2026-10-06T00:07:33Z"
+    completed_at: "2026-10-06T00:28:57Z"
+  - id: "resources-test-coverage"
+    name: "Resource Crate Test Coverage"
+    description: "Cover the two remaining untested behaviors in oxeylyzer-resources: that the generated default config round-trips through the app config loader with its three data paths intact, and that all generated paths resolve under the platform root rather than only the override root."
+    files:
+      - "oxeylyzer-resources/src/dirs.rs"
+      - "oxeylyzer-resources/src/seed.rs"
+      - "oxeylyzer-resources/src/download.rs"
+    status: done
+    current_phase: null
+    branch: "feature/time-machine-resources-test-coverage"
+    pushed: false
+    started_at: "2026-10-06T00:32:47Z"
+    completed_at: "2026-10-06T00:47:59Z"
+  - id: "corpus-config-serialization"
+    name: "Corpus Config Serialization Support"
+    description: "Serialize the Multiple character-mapping struct instead of panicking, so corpus configurations round-trip rather than hitting an unimplemented path."
+    files:
+      - "oxeylyzer-repl/src/corpus_transposition.rs"
+    status: skipped
+    current_phase: null
+    branch: "feature/time-machine-corpus-config-serialization"
+    pushed: null
+    started_at: "2026-10-06T00:51:49Z"
+    completed_at: "2026-10-06T00:51:49Z"
+    # Skipped 2026-10-06. Not a defect. `CorpusConfig` derives Deserialize only --
+    # nothing in the chain derives Serialize -- so the `unimplemented!()` at
+    # corpus_transposition.rs:25 sits in the write direction of a read-only
+    # converter and cannot execute. The `multiple` field is typed
+    # Vec<(char, String)>, not `Multiple`; that struct exists only to feed the
+    # reader. Every call site is toml::from_str. Nothing writes corpus configs.
+    # Reading is load-bearing: 14 published corpus configs use this mapping table,
+    # including czech/french/esperanto with uppercase_versions = true.
+    #
+    # Reconsider if a "save corpus config" feature is ever wanted. The honest fix
+    # then is a real Serialize impl plus dropping Serialize from the read-only
+    # sub-types (OneToOne, ShiftKey) so unsupported writes fail at compile time
+    # rather than panicking at runtime. See specs/004-corpus-config-serialization/
+    # for the full spec, written before the skip decision.
+
+  - id: "dead-key-mapping"
+    name: "Dead Key and Shift Mapping"
+    description: "Map dead keys, custom shift, and repeat characters when cleaning corpora so languages with diacritics and layered layouts produce accurate character counts."
+    files:
+      - "oxeylyzer-repl/src/corpus_transposition.rs"
+      - "oxeylyzer-core/src/corpus_cleaner.rs"
+    status: skipped
+    current_phase: null
+    branch: null
+    pushed: null
+    started_at: null
+    completed_at: "2026-10-06T00:51:49Z"
+    # Skipped 2026-10-06 — real bug, deferred to TODO.md so the run can finish.
+    # Investigation found the entry half wrong: `custom shift` and `repeat char` are
+    # implemented and wired (corpus_transposition.rs:233-234, consumed at
+    # corpus_cleaner.rs:388 and :397). Only dead-key mapping is missing.
+    #
+    # The real defect is worse than "unwired": with_dead_key maps
+    # HashMap<char, Vec<char>>, one input char to output chars, so it cannot match a
+    # two-char dead-key sequence. with_dead_key([('a','a')], 'B4') gives
+    # mappings['a'] = ['B4','a'], composing plain letters INTO dead-key sequences --
+    # the inverse of its own docstring, which documents ('a','a') collapsing to 'a'.
+    # Unreachable today because no CorpusConfig field exposes dead keys, but it
+    # corrupts character counts for diacritic languages the moment one is added.
+    # CorpusCleanerIterator already carries a SlidingWindow (line 415) used for
+    # repeat_key, so the sequence matching is wiring, not new infrastructure.
+    # Open question: should dead keys generate uppercase forms, or leave that to the
+    # existing uppercase_versions flag on the `multiple` table?
+
+  - id: "tauri-startup-graceful"
+    name: "Graceful Desktop Startup Failures"
+    description: "Report directory resolution, download, and config load failures as actionable startup errors instead of panicking, so the app can explain what went wrong."
+    files:
+      - "oxeylyzer-tauri/src-tauri/src/lib.rs"
+    status: done
+    current_phase: null
+    branch: "feature/time-machine-tauri-startup-graceful"
+    pushed: false
+    started_at: "2026-10-06T01:02:27Z"
+    completed_at: "2026-10-06T01:33:47Z"
+  - id: "edit-view-rename-delete"
+    name: "Layout Rename Consistency"
+    description: "Make editing a layout's name leave no orphaned file on disk, and remove the assumption that boards are always a five-plus-five row split."
+    files:
+      - "oxeylyzer-tauri/src/views/EditView.tsx"
+      - "oxeylyzer-tauri/src-tauri/src/lib.rs"
+    status: done
+    current_phase: null
+    branch: "feature/time-machine-edit-view-rename-delete"
+    pushed: false
+    started_at: "2026-10-06T01:33:47Z"
+    completed_at: "2026-10-06T01:59:22Z"
+  - id: "layout-auto-naming"
+    name: "Layout Auto-Naming Accuracy"
+    description: "Derive a generated layout's name from its actual board shape and anchor keys rather than a fixed positional offset that misnames non-standard boards."
+    files:
+      - "oxeylyzer-core/src/layout.rs"
+      - "oxeylyzer-core/src/fast_layout.rs"
+    status: done
+    current_phase: null
+    branch: "feature/time-machine-layout-auto-naming"
+    pushed: false
+    started_at: "2026-10-06T01:59:22Z"
+    completed_at: "2026-10-06T04:31:53Z"
+  - id: "generate-dead-code"
+    name: "Generation Dead Code and Hot Path"
+    description: "Derive the per-finger usage contribution for a scored swap from the layout cache instead of recomputing it, so the value already computed at cache-build time is not recalculated on every candidate."
+    files:
+      - "oxeylyzer-core/src/generate.rs"
+    status: done
+    current_phase: null
+    branch: "feature/time-machine-generate-dead-code"
+    pushed: false
+    started_at: "2026-10-06T04:31:53Z"
+    completed_at: "2026-10-06T06:02:32Z"

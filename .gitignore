@@ -13,3 +13,6 @@ session.json
 .vite
 result
 tarpaulin-report.*
+oxeylyzer-tauri/src-tauri/Cargo.lock
+.cargo/audit.toml
+__pycache__/

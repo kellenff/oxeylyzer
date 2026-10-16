@@ -1,0 +1,43 @@
+# MSRV hold records (FR-002a, data-model.md E3).
+#
+# When a dependency's latest stable requires a Rust version outside the three-release
+# window, the WINDOW WINS: the dependency is held at its newest window-compatible
+# version and the hold is recorded here. The freshness step reads this file and
+# reports those crates "held (recorded)" instead of "behind" — never silent.
+#
+# The same file records FRONTEND version holds (npm packages in
+# oxeylyzer-tauri/package.json), with `crate` set to the npm package name and no
+# `required_rust` — the reason field carries the blocker. The freshness step
+# reports such a row "held (recorded)" the same way.
+#
+# A hold is a VERSION hold: the dependency is pinned below the newest version
+# available. It is legal only while the declared range cannot reach that newest
+# version — scripts/ci/freshness.py:170 flags any frontend hold whose range
+# admits the registry `latest` as HOLD STALE and fails the build, and
+# scripts/ci/freshness.py:323 does the same for a Rust hold once its `required_rust`
+# fits the window. A stale hold is a build failure on purpose: it says the hold's
+# reason expired.
+#
+# A dependency SUBSTITUTION cannot be expressed here. Replacing a package outright
+# — the eslint-to-oxlint swap in docs/dependency-policy.md §9 is the live case —
+# leaves the replacement itself at latest, so a row for it would be reported stale
+# immediately and fail the gate. Substitutions are recorded in
+# docs/dependency-policy.md §9 with the condition that would reopen the old path.
+#
+# Fields per [[hold]] entry:
+#   crate         — dependency name being held
+#   held          — version actually resolved in Cargo.lock
+#   latest        — newest stable available
+#   required_rust — `rust-version` declared by `latest`
+#   reason        — why the window wins for this project
+#
+# A hold whose `required_rust` now fits inside the window is stale: the freshness
+# step fails the build until the entry is removed (the dependency can be upgraded).
+#
+# Example shape (there are no holds at planning time — every 009 upgrade fits 1.97):
+#   [[hold]]
+#   crate = "example"
+#   held = "1.2.3"
+#   latest = "2.0.0"
+#   required_rust = "1.99"
+#   reason = "2.0 requires an out-of-window toolchain; revisit when 1.99 enters the window"

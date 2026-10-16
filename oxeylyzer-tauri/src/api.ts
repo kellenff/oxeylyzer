@@ -201,3 +201,24 @@ export async function getSession(): Promise<Session> {
 export async function setSession(session: Session): Promise<void> {
   return invoke("set_session", { session });
 }
+
+export type DownloadProgress = {
+  status: "connecting" | "downloading" | "extracting" | "done";
+  bytesDone?: number;
+  bytesTotal?: number | null;
+};
+
+/**
+ * Startup failure message, or null when startup succeeded.
+ *
+ * The setup hook runs before this frontend mounts, so a one-shot event would be
+ * missed — hence a query rather than a listener.
+ */
+export async function startupError(): Promise<string | null> {
+  return invoke("startup_error");
+}
+
+/** Last download-progress payload, or null if no download is in flight or finished. */
+export async function downloadProgress(): Promise<DownloadProgress | null> {
+  return invoke("download_progress");
+}

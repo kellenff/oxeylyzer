@@ -95,7 +95,7 @@ pub enum ReplError {
     #[error(transparent)]
     FmtError(#[from] std::fmt::Error),
     #[error(transparent)]
-    XflagsError(#[from] xflags::Error),
+    ClapError(#[from] clap::Error),
     #[error(transparent)]
     OxeylyzerError(#[from] OxeylyzerError),
     #[error(transparent)]
@@ -399,12 +399,8 @@ impl Repl {
 
     fn placeholder_name(&self, layout: &FastLayout) -> Result<String> {
         for i in 1..1000usize {
-            let new_name = layout
-                .keys
-                .iter()
-                .skip(10)
-                .take(4)
-                .map(|u| self.layout_gen.mapping.get_c(*u))
+            let new_name = auto_name(&layout.keys, &layout.shape, &self.layout_gen.mapping)
+                .chars()
                 .chain(i.to_string().chars())
                 .collect::<String>()
                 .replace('*', "-");
@@ -760,7 +756,7 @@ impl Repl {
         match self.reset_with_language(&language) {
             Ok(_) => println!(
                 "Set language to {}. Sfr: {:.2}%",
-                &language,
+                language,
                 self.sfr_freq() * 100.0
             ),
             Err(e) => println!("Failed to set language: {}", e),
@@ -1187,17 +1183,17 @@ pub fn is_md5_hash(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use once_cell::sync::Lazy;
+    use std::sync::LazyLock;
 
     use super::*;
 
-    static REPL: Lazy<Repl> = Lazy::new(|| {
+    static REPL: LazyLock<Repl> = LazyLock::new(|| {
         let dirs =
             OxeylyzerDirs::with_override(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."));
         Repl::new(dirs).unwrap()
     });
 
-    static QWERTY: Lazy<FastLayout> = Lazy::new(|| {
+    static QWERTY: LazyLock<FastLayout> = LazyLock::new(|| {
         let dof_str = r#"
             {
                 "name": "Qwerty",

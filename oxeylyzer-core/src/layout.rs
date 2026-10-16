@@ -259,14 +259,7 @@ impl From<FastLayout> for Layout {
     fn from(layout: FastLayout) -> Self {
         let name = match layout.name {
             Some(name) => name,
-            None => layout
-                .keys
-                .iter()
-                .copied()
-                .skip(10) // TODO: maybe make more accurate based on board shape + anchor
-                .take(4)
-                .map(|u| layout.mapping.get_c(u))
-                .collect::<String>(),
+            None => fast_layout::auto_name(&layout.keys, &layout.shape, &layout.mapping),
         };
 
         Self {

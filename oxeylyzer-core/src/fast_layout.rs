@@ -13,6 +13,31 @@ use crate::{
 };
 
 const KEY_EDGE_OFFSET: f64 = 0.5;
+/// Derives a layout name from its first four home-row keys.
+///
+/// The home row is the second row of the board, which is how keyboard layouts are
+/// conventionally named — "Colemak" from `c o l e`. Deriving the row from the
+/// layout's own shape rather than skipping a fixed number of keys keeps this correct
+/// for boards whose first row is not ten keys wide, such as a four-row board where a
+/// fixed offset would name the layout after its number row.
+///
+/// Falls back to whatever keys are available, so degenerate boards still produce a
+/// name instead of panicking or yielding an empty one.
+pub fn auto_name(keys: &[u8], shape: &Shape, mapping: &CharMapping) -> String {
+    // Keys before the home row: the first row's width. A board with fewer than two rows
+    // has no home row, so fall back to the first rather than skipping past every key.
+    let skip = match shape.inner() {
+        [first, ..] if shape.inner().len() >= 2 => (*first).min(keys.len()),
+        _ => 0,
+    };
+
+    keys.get(skip..)
+        .unwrap_or_default()
+        .iter()
+        .take(4)
+        .map(|&u| mapping.get_c(u))
+        .collect()
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(into = "crate::layout::Layout", from = "crate::layout::Layout")]
@@ -407,8 +432,8 @@ impl FSpeedIndices {
                     .zip(keyboard)
                     .zip(0u8..)
                     .filter_map(|((f, k), i)| (f == &finger).then_some((k, i)))
-                    .tuple_combinations::<(_, _)>()
-                    .map(|((k1, i1), (k2, i2))| {
+                    .array_combinations::<2>()
+                    .map(|[(k1, i1), (k2, i2)]| {
                         let pair = PosPair(i1, i2);
                         let dist = (dist(k1, k2, finger, finger)
                             * 100.0
@@ -507,8 +532,8 @@ impl ScissorIndices {
             .zip(keyboard)
             .enumerate()
             .map(|(i, t)| (i as u8, t))
-            .tuple_combinations::<(_, _)>()
-            .flat_map(|((i1, (&f1, k1)), (i2, (&f2, k2)))| {
+            .array_combinations::<2>()
+            .flat_map(|[(i1, (&f1, k1)), (i2, (&f2, k2))]| {
                 if !adjacent_fingers_same_hand(f1, f2) {
                     return None;
                 }
@@ -641,8 +666,8 @@ impl LsbIndices {
             .zip(keyboard)
             .enumerate()
             .map(|(i, t)| (i as u8, t))
-            .tuple_combinations::<(_, _)>()
-            .filter_map(|((i1, (&f1, k1)), (i2, (&f2, k2)))| {
+            .array_combinations::<2>()
+            .filter_map(|[(i1, (&f1, k1)), (i2, (&f2, k2))]| {
                 if f1.hand() != f2.hand() {
                     return None;
                 }
@@ -713,8 +738,8 @@ impl PinkyRingIndices {
             .iter()
             .enumerate()
             .map(|(i, t)| (i as u8, t))
-            .tuple_combinations::<(_, _)>()
-            .filter_map(|((i1, &f1), (i2, &f2))| {
+            .array_combinations::<2>()
+            .filter_map(|[(i1, &f1), (i2, &f2)]| {
                 // same hand only
                 if f1.hand() != f2.hand() {
                     return None;
@@ -844,9 +869,9 @@ impl StretchIndices {
             .zip(keys)
             .enumerate()
             .map(|(i, t)| (i as u8, t))
-            .tuple_combinations::<(_, _)>()
-            .filter(|((_, ((_, f1), _)), (_, ((_, f2), _)))| f1 != f2 && (f1.hand() == f2.hand()))
-            .filter_map(|((i1, ((k1, &f1), _c1)), (i2, ((k2, &f2), _c2)))| {
+            .array_combinations::<2>()
+            .filter(|[(_, ((_, f1), _)), (_, ((_, f2), _))]| f1 != f2 && (f1.hand() == f2.hand()))
+            .filter_map(|[(i1, ((k1, &f1), _c1)), (i2, ((k2, &f2), _c2))]| {
                 let diff = (f1 as u8).abs_diff(f2 as u8) as f64;
                 let fd = diff * 1.35;
                 // let minimum_diff = diff * 0.9;
@@ -1044,9 +1069,9 @@ mod tests {
     use crate::{data::Data, generate::Oxeylyzer, layout::Layout, weights::Config};
 
     use super::*;
-    use once_cell::sync::Lazy;
+    use std::sync::LazyLock;
 
-    static GEN: Lazy<Oxeylyzer> = Lazy::new(|| {
+    static GEN: LazyLock<Oxeylyzer> = LazyLock::new(|| {
         let base = PathBuf::from(concat!(std::env!("CARGO_MANIFEST_DIR"), "/.."));
         let config = Config::with_loaded_weights(base.join("config.toml")).unwrap();
         let data = Data::load(base.join(&config.corpus)).unwrap();
@@ -1054,7 +1079,70 @@ mod tests {
         Oxeylyzer::new(data, config)
     });
 
-    static QWERTY: Lazy<FastLayout> = Lazy::new(|| {
+    /// Builds a layout whose keys spell out `labels`, one key per listed row width.
+    fn layout_of(widths: &[usize], mapping: &CharMapping) -> (Vec<u8>, Shape) {
+        let keys: Vec<u8> = (0..widths.iter().sum::<usize>())
+            .map(|i| mapping.get_u((b'a' + i as u8) as char))
+            .collect();
+        (keys, Shape::from(widths.to_vec()))
+    }
+
+    #[test]
+    fn auto_name_uses_the_second_row() {
+        // 3x10 is every shipped layout, and what the old fixed offset encoded.
+        let mapping = &GEN.mapping;
+        let (keys, shape) = layout_of(&[10, 10, 10], mapping);
+        assert_eq!(auto_name(&keys, &shape, mapping), "klmn");
+    }
+
+    #[test]
+    fn auto_name_uses_the_second_row_on_a_four_row_board() {
+        // The old skip(10) landed on the number row here.
+        let mapping = &GEN.mapping;
+        let (keys, shape) = layout_of(&[10, 10, 10, 10], mapping);
+        assert_eq!(auto_name(&keys, &shape, mapping), "klmn");
+    }
+
+    #[test]
+    fn auto_name_handles_ragged_rows() {
+        let mapping = &GEN.mapping;
+        let (keys, shape) = layout_of(&[13, 12, 12], mapping);
+        assert_eq!(auto_name(&keys, &shape, mapping), "nopq");
+    }
+
+    #[test]
+    fn auto_name_falls_back_when_the_home_row_is_short() {
+        let mapping = &GEN.mapping;
+        let (keys, shape) = layout_of(&[10, 2], mapping);
+        // Two keys in the home row, then it continues into whatever exists.
+        assert_eq!(auto_name(&keys, &shape, mapping), "kl");
+    }
+
+    #[test]
+    fn auto_name_handles_a_single_row_board() {
+        let mapping = &GEN.mapping;
+        let (keys, shape) = layout_of(&[6], mapping);
+        assert_eq!(auto_name(&keys, &shape, mapping), "abcd");
+    }
+
+    #[test]
+    fn auto_name_of_an_empty_board_is_empty() {
+        let mapping = &GEN.mapping;
+        assert_eq!(auto_name(&[], &Shape::from(vec![]), mapping), "");
+        assert_eq!(auto_name(&[], &Shape::from(vec![10]), mapping), "");
+    }
+
+    #[test]
+    fn auto_name_survives_a_shape_wider_than_the_keys() {
+        let mapping = &GEN.mapping;
+        // Declared width exceeds the keys present; the keys are authoritative.
+        let keys: Vec<u8> = (0..5)
+            .map(|i| mapping.get_u((b'a' + i as u8) as char))
+            .collect();
+        assert_eq!(auto_name(&keys, &Shape::from(vec![99, 99]), mapping), "");
+    }
+
+    static QWERTY: LazyLock<FastLayout> = LazyLock::new(|| {
         let dof_str = r#"
             {
                 "name": "Qwerty",

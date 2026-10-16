@@ -8,7 +8,7 @@ use oxeylyzer_core::generate::LayoutStats;
 use oxeylyzer_core::rayon::iter::ParallelIterator;
 use oxeylyzer_core::{analyzer_data::AnalyzerData, generate::Oxeylyzer};
 
-use ansi_rgb::{Colorable, rgb};
+use crate::color::{Colorable, rgb};
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 
 pub fn heatmap_heat(c: char, data: &AnalyzerData) -> String {

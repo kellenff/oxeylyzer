@@ -3,7 +3,8 @@ import { createStore } from "solid-js/store";
 
 export type HeatScheme = "original" | "playground" | "v2";
 export const [heatScheme, setHeatScheme] = createSignal<HeatScheme>("playground");
-import { listLayouts, listLanguages, currentLanguage, getCharFrequencies } from "./api";
+import { listLayouts, listLanguages, currentLanguage, getCharFrequencies, startupError } from "./api";
+import type { DownloadProgress } from "./api";
 import type { Layout } from "./types";
 
 type AppStore = {
@@ -14,6 +15,8 @@ type AppStore = {
   charFrequencies: Record<string, number>;
   loading: boolean;
   error: string | null;
+  /** First-run data download progress; null when idle or complete. */
+  downloadProgress: DownloadProgress | null;
 };
 
 export const [appStore, setAppStore] = createStore<AppStore>({
@@ -23,11 +26,21 @@ export const [appStore, setAppStore] = createStore<AppStore>({
   charFrequencies: {},
   loading: false,
   error: null,
+  downloadProgress: null,
 });
 
 export async function initStore(): Promise<void> {
   setAppStore("loading", true);
   setAppStore("error", null);
+
+  // Checked before fetching: a startup failure means the commands below will fail too,
+  // and the user needs the specific reason rather than a downstream command error.
+  const startup = await startupError().catch(() => null);
+  if (startup) {
+    setAppStore({ error: startup, loading: false });
+    return;
+  }
+
   try {
     await fetchStore();
     setAppStore("loading", false);

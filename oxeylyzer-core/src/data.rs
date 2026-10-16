@@ -428,7 +428,12 @@ impl IntermediateData {
         let chunker = FileChunker::new(&file).map_err(|_| OxeylyzerError::ChunkerInitError)?;
 
         let file_len = file.metadata().str_context(name)?.len() as usize;
-        let chunk_count = (file_len / CHUNK_SIZE).clamp(1, num_cpus::get() - 1);
+        // The removed CPU-count crate fell back to 1 when the query failed; keep that exact value
+        // here so the chunk count — and therefore the cleaned corpus — is unchanged (FR-017).
+        let cores = std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1);
+        let chunk_count = (file_len / CHUNK_SIZE).clamp(1, cores - 1);
 
         let chunks = chunker
             .chunks(chunk_count, Some(' '))

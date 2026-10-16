@@ -1,12 +1,12 @@
-[![CI](https://github.com/oxey/oxeylyzer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/oxey/oxeylyzer/actions/workflows/ci.yml)
-
 # Oxeylyzer
 
 Oxeylyzer is a keyboard layout analyzer and generator. It comes in two forms: a command-line REPL and a graphical desktop app built with Tauri.
 
+**This repository, [kellenff/oxeylyzer](https://github.com/kellenff/oxeylyzer), is the maintained fork and the trunk for ongoing development.** The original project lives at [o-x-e-y/oxeylyzer](https://github.com/o-x-e-y/oxeylyzer) — active on its `staging` branch, but nothing here inherits from it and there is no `upstream` remote, so read it as the origin rather than the source of truth for this code's issues or CI. See [docs/dependency-policy.md](docs/dependency-policy.md) for the dependency policy and [.github/workflows/ci.yml](.github/workflows/ci.yml) for the steps that check it.
+
 ## Downloads
 
-Pre-built binaries for the desktop app are available on the [Releases page](https://github.com/o-x-e-y/oxeylyzer/releases). Grab the appropriate installer for your platform and run it — no build step required.
+Pre-built binaries for the 0.1.0 desktop app are available on the [original project's Releases page](https://github.com/o-x-e-y/oxeylyzer/releases). Grab the appropriate installer for your platform and run it — no build step required. This fork does not publish binaries yet — build the desktop app from source (see below) for anything newer than 0.1.0.
 
 ---
 

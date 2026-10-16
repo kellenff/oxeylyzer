@@ -9,7 +9,7 @@ use std::{
 
 use oxeylyzer_core::{
     data::Data,
-    fast_layout::{BigramPair, FastLayout},
+    fast_layout::{BigramPair, FastLayout, auto_name},
     generate::{LayoutStats, Oxeylyzer},
     layout::{Layout, LayoutMetadata},
     rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
@@ -17,7 +17,7 @@ use oxeylyzer_core::{
 };
 use oxeylyzer_resources::OxeylyzerDirs;
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 // ─── DTOs ─────────────────────────────────────────────────────────────────────
 
@@ -1057,14 +1057,7 @@ fn save_generated(
         .ok_or_else(|| format!("Index {index} out of bounds ({len} results)"))?;
 
     // Assign the chosen name.
-    let save_name = name.unwrap_or_else(|| {
-        fl.keys
-            .iter()
-            .skip(10)
-            .take(4)
-            .map(|&u| engine.mapping.get_c(u))
-            .collect::<String>()
-    });
+    let save_name = name.unwrap_or_else(|| auto_name(&fl.keys, &fl.shape, &engine.mapping));
     fl.name = Some(save_name.clone());
 
     // Serialize to .dof JSON, clearing provenance fields from the base layout.
@@ -1223,25 +1216,52 @@ fn save_layout_edit(
         .map_err(|e| format!("Invalid layout JSON: {e}"))?;
     let new_name = layout.name.clone();
 
-    // Find the original file path.
     let lang = state.engine.lock().unwrap().language.clone();
-    let file_name = original_name.replace(' ', "_").to_lowercase();
-    let path = state
-        .dirs
-        .layouts_dir()
-        .join(&lang)
-        .join(&file_name)
-        .with_extension("dof");
+    let original_path = layout_path(&state, &lang, &original_name);
+    let new_path = layout_path(&state, &lang, &new_name);
+    let is_rename = original_path != new_path;
+
+    if is_rename {
+        // Refuse rather than clobber, matching how the REPL handles a name collision.
+        if new_path.exists() {
+            return Err(format!(
+                "Cannot rename to \"{new_name}\": a layout with that name already exists."
+            ));
+        }
+        if !original_path.exists() {
+            return Err(format!(
+                "Cannot save: the file for \"{original_name}\" no longer exists on disk."
+            ));
+        }
+    }
 
     let json = serde_json::to_string_pretty(&dof_json).map_err(|e| e.to_string())?;
-    std::fs::write(&path, &json).map_err(|e| format!("Write failed: {e}"))?;
 
-    // Reload into state.
-    let layout_loaded = Layout::load(&path).map_err(|e| e.to_string())?;
+    // Write first, then remove the old file. A failed write leaves the original
+    // intact; delete-then-write would risk losing the layout.
+    std::fs::write(&new_path, &json).map_err(|e| format!("Write failed: {e}"))?;
+    if is_rename {
+        std::fs::remove_file(&original_path).map_err(|e| {
+            format!("Saved as \"{new_name}\" but could not remove the old file: {e}")
+        })?;
+    }
+
+    let layout_loaded = Layout::load(&new_path).map_err(|e| e.to_string())?;
     let mut layouts = state.layouts.lock().unwrap();
     layouts.remove(&original_name.to_lowercase());
     layouts.insert(new_name.to_lowercase(), layout_loaded);
     Ok(())
+}
+
+/// Path of a layout's file within its language directory.
+fn layout_path(state: &AppState, lang: &str, name: &str) -> PathBuf {
+    let file_name = name.replace(' ', "_").to_lowercase();
+    state
+        .dirs
+        .layouts_dir()
+        .join(lang)
+        .join(&file_name)
+        .with_extension("dof")
 }
 
 #[tauri::command]
@@ -1592,73 +1612,173 @@ fn reload_state(state: &AppState) -> Result<(), String> {
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+/// Startup status the frontend reads after it mounts.
+///
+/// The setup hook runs before the webview loads, so an event emitted there would be
+/// missed by a listener that registers on mount. The last progress payload and any
+/// failure message are recorded here so the UI can query them instead.
+#[derive(Default)]
+struct StartupStatus {
+    error: Option<String>,
+    progress: Option<serde_json::Value>,
+}
+
+#[tauri::command]
+fn startup_error(status: tauri::State<'_, StartupStatus>) -> Option<String> {
+    status.error.clone()
+}
+
+#[tauri::command]
+fn download_progress(status: tauri::State<'_, StartupStatus>) -> Option<serde_json::Value> {
+    status.progress.clone()
+}
+
+/// Resolves the data and config directories, honouring the dev override.
+///
+/// Returns a message naming the directory that could not be used, rather than
+/// terminating: a user who double-clicked the app has no terminal to read a panic.
+fn resolve_dirs() -> Result<OxeylyzerDirs, String> {
+    match std::env::var("OXEYLYZER_DATA_DIR") {
+        Ok(p) => Ok(OxeylyzerDirs::with_override(PathBuf::from(p))),
+        Err(_) => OxeylyzerDirs::resolve().map_err(|e| {
+            format!(
+                "Could not set up the oxeylyzer data directory. Oxeylyzer keeps its \
+                 layouts and language data in your user data directory. {e}"
+            )
+        }),
+    }
+}
+
+/// Startup state plus the values the file watcher needs.
+struct Initialized {
+    state: AppState,
+}
+
+/// Performs the startup work that must succeed before the app is usable.
+///
+/// On first run the data files are downloaded synchronously before the engine is
+/// built — the corpus and layouts must exist before they can be read. Each failure
+/// returns a message naming both the step and the location involved, so the user can
+/// tell what to change rather than just that something broke.
+fn initialize(
+    dirs: OxeylyzerDirs,
+    app_handle: AppHandle,
+    status: Arc<Mutex<StartupStatus>>,
+) -> Result<Initialized, String> {
+    if dirs.needs_data() {
+        use oxeylyzer_resources::DownloadProgress;
+        // ensure_data's progress callback must be 'static, so move the handle in.
+        let emit_handle = app_handle.clone();
+        let status = Arc::clone(&status);
+        dirs.ensure_data(move |p| {
+            let payload = match &p {
+                DownloadProgress::Connecting => serde_json::json!({"status": "connecting"}),
+                DownloadProgress::Downloading {
+                    bytes_done,
+                    bytes_total,
+                } => serde_json::json!({
+                    "status": "downloading",
+                    "bytesDone": bytes_done,
+                    "bytesTotal": bytes_total,
+                }),
+                DownloadProgress::Extracting => serde_json::json!({"status": "extracting"}),
+                DownloadProgress::Done => serde_json::json!({"status": "done"}),
+            };
+            if let Ok(mut s) = status.lock() {
+                s.progress = Some(payload.clone());
+            }
+            let _ = emit_handle.emit("download-progress", payload);
+        })
+        .map_err(|e| {
+            format!(
+                "Could not download the built-in data files. Oxeylyzer needs them for \
+                 layouts and language data — check your network connection and try \
+                 again. {e}"
+            )
+        })?;
+    }
+
+    // Idempotent; ensure_data already calls it on first run, but calling it here means
+    // a missing config is always recovered.
+    let config_file = dirs.config_file();
+    dirs.ensure_config()
+        .map_err(|e| format!("Could not write {}. {e}", config_file.display()))?;
+
+    let config = Config::with_loaded_weights(&config_file).map_err(|e| {
+        format!(
+            "Could not parse {}. Fix or delete it to start over. {e}",
+            config_file.display()
+        )
+    })?;
+
+    let corpus_path = dirs.data_dir().join(&config.corpus);
+    let data = Data::load(&corpus_path).map_err(|e| {
+        format!(
+            "Could not read the corpus file {}. It is set by the `corpus` option in {} — \
+             change it there, or pick a different language in the Language view. {e}",
+            corpus_path.display(),
+            config_file.display()
+        )
+    })?;
+
+    let engine = Arc::new(Oxeylyzer::new(data, config.clone()));
+    let layouts = load_all_layouts(&config, dirs.data_dir());
+
+    Ok(Initialized {
+        state: AppState {
+            engine: Mutex::new(engine),
+            layouts: Mutex::new(layouts),
+            generated: Mutex::new(Vec::new()),
+            dirs,
+            config: Mutex::new(config),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            generating: Arc::new(AtomicBool::new(false)),
+        },
+    })
+}
+
+/// Starts the desktop application.
+///
+/// Returns the framework error rather than panicking on it, so the caller can set a
+/// meaningful exit code. Startup failures that reach the user are reported in-window
+/// by the setup hook and do not come through here.
+pub fn run() -> Result<(), tauri::Error> {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let dirs = if let Ok(p) = std::env::var("OXEYLYZER_DATA_DIR") {
-                OxeylyzerDirs::with_override(PathBuf::from(p))
-            } else {
-                OxeylyzerDirs::resolve().expect("failed to resolve data directory")
+            let app_handle = app.handle().clone();
+
+            // Managed before any fallible work so the frontend can always query status,
+            // even when startup fails.
+            let status = Arc::new(Mutex::new(StartupStatus::default()));
+            app.manage(Arc::clone(&status));
+
+            let fail = |message: String| -> Result<(), Box<dyn std::error::Error>> {
+                // The window already exists at this point — tauri builds configured
+                // windows before invoking setup — so record the message for the UI and
+                // keep the window open rather than tearing the app down.
+                if let Ok(mut s) = status.lock() {
+                    s.error = Some(message.clone());
+                }
+                let _ = app_handle.emit("startup-error", message);
+                Ok(())
             };
 
-            // On first run, download data files synchronously before initialising the
-            // engine — corpus and layout files must exist before we try to load them.
-            // Progress events are emitted so a frontend loading screen can react.
-            if dirs.is_first_run() {
-                use oxeylyzer_resources::DownloadProgress;
-                let app_handle = app.handle().clone();
-                dirs.ensure_data(move |p| {
-                    let payload = match &p {
-                        DownloadProgress::Connecting => {
-                            serde_json::json!({"status": "connecting"})
-                        }
-                        DownloadProgress::Downloading {
-                            bytes_done,
-                            bytes_total,
-                        } => {
-                            serde_json::json!({
-                                "status": "downloading",
-                                "bytesDone": bytes_done,
-                                "bytesTotal": bytes_total,
-                            })
-                        }
-                        DownloadProgress::Extracting => {
-                            serde_json::json!({"status": "extracting"})
-                        }
-                        DownloadProgress::Done => serde_json::json!({"status": "done"}),
-                    };
-                    let _ = app_handle.emit("download-progress", payload);
-                })
-                .expect("failed to download resources");
+            let dirs = match resolve_dirs() {
+                Ok(dirs) => dirs,
+                Err(message) => return fail(message),
+            };
+
+            match initialize(dirs, app_handle.clone(), Arc::clone(&status)) {
+                Ok(initialized) => {
+                    app.manage(initialized.state);
+                }
+                Err(message) => return fail(message),
             }
 
-            // ensure_config is idempotent; ensure_data already calls it on first run,
-            // but call it here too so a missing config is always recovered.
-            dirs.ensure_config()
-                .expect("failed to write default config");
-
-            let config = Config::with_loaded_weights(dirs.config_file())
-                .expect("failed to load config.toml");
-
-            let corpus_path = dirs.data_dir().join(&config.corpus);
-            let data = Data::load(&corpus_path).expect("failed to load corpus");
-
-            let engine = Arc::new(Oxeylyzer::new(data, config.clone()));
-            let layouts = load_all_layouts(&config, dirs.data_dir());
-
-            let watch_config = dirs.config_file();
-            let watch_layouts = dirs.layouts_dir();
-
-            app.manage(AppState {
-                engine: Mutex::new(engine),
-                layouts: Mutex::new(layouts),
-                generated: Mutex::new(Vec::new()),
-                dirs,
-                config: Mutex::new(config),
-                cancel_flag: Arc::new(AtomicBool::new(false)),
-                generating: Arc::new(AtomicBool::new(false)),
-            });
+            let state = app.state::<AppState>();
+            let watch_config = state.dirs.config_file();
+            let watch_layouts = state.dirs.layouts_dir();
 
             // File watcher: auto-reload when config.toml or layout files change.
             {
@@ -1739,10 +1859,11 @@ pub fn run() {
             get_config,
             set_config,
             get_defaults,
+            startup_error,
+            download_progress,
             list_weight_presets,
             save_weight_preset,
             load_weight_preset,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
 }

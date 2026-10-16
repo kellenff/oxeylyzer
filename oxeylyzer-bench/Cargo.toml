@@ -2,6 +2,7 @@
 name = "oxeylyzer-bench"
 version = "0.2.0"
 edition = "2024"
+rust-version.workspace = true
 default-run = "oxeylyzer-bench"
 
 [dependencies]
@@ -9,6 +10,6 @@ oxeylyzer-core = { path = "../oxeylyzer-core" }
 oxeylyzer-repl = { path = "../oxeylyzer-repl" }
 oxeylyzer-resources = { path = "../oxeylyzer-resources" }
 anyhow = { workspace = true }
-ratatui = "0.29"
-crossterm = "0.28"
-xflags = { git = "https://github.com/O-X-E-Y/xflags/" }
+ratatui = "0.30"
+crossterm = "0.29"
+clap = { version = "4.6", features = ["derive"] }

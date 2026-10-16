@@ -15,7 +15,12 @@ use oxeylyzer_resources::OxeylyzerDirs;
 use crate::runner::{AlgorithmKind, Budget};
 
 fn main() -> anyhow::Result<()> {
-    let flags = flags::Bench::from_env_or_exit();
+    // `exit()` keeps the shell-visible surface: help/version print to stdout and exit
+    // 0, a parse failure prints to stderr and exits 2, as the old parser did.
+    let flags = match flags::Bench::from_vec(std::env::args_os().skip(1).collect()) {
+        Ok(flags) => flags,
+        Err(err) => err.exit(),
+    };
 
     let language = flags.language.unwrap_or_else(|| "english".to_string());
     let dirs = OxeylyzerDirs::resolve().map_err(|e| anyhow!("{e}"))?;
