@@ -174,9 +174,12 @@ oxlint and eslint 10 + TS ≤ 6, TS 7 was kept — the same "constraint wins, re
 FR-002a. `eslint.config.js` is deleted; oxlint's coverage was proven by planting unused
 variables and a constant condition in both `.ts` and `.tsx` files, which it flags.
 
-**Not verified**: `bun run tauri dev` needs a GUI session, so the desktop smoke test is out
-standing. No CI job runs the frontend either, so CI is unaffected; a maintainer should load
-the app once before releasing from this branch.
+**Verified**: `bun run tauri dev` brings the Vite 8.3.4 dev server up on `localhost:1420` and the
+window loads. Driven through the running window on 2026-10-15 (Accessibility + screen recording
+granted): `Analyze` on `recurva_oxeylyzer` in the shai corpus renders its full stats and
+**`Score 0.441`** — the same score `printf 'language shai\nanalyze recurva_oxeylyzer\nquit\n' |
+cargo run` prints for that layout, so the IPC path and the terminal path agree. No CI job runs
+the frontend either, so a frontend regression still would not fail CI.
 
 ## 8. Identity + policy documents (FR-016)
 

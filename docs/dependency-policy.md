@@ -251,18 +251,27 @@ and `oxlint` (the Oxc linter, matching the Rolldown/Oxc bundler now in the build
 replaced it. `eslint.config.js` is deleted. Lint coverage was verified by planting unused
 variables and a constant condition in both `.ts` and `.tsx`: oxlint flags both.
 
-**FR-018 — the dev loop runs; the click-through was not driven.** `bun run tauri dev` was run
-2026-10-15 in a real Aqua session and does work: it compiles `oxeylyzer-tauri`, brings the Vite 8.3.4
-dev server up on `localhost:1420` (HTTP 200), and launches the binary. The app registers with the
-WindowServer and spawns its `Networking` and `Graphics and Media` helpers, so the WebView window
-really comes up; the SolidJS client executes (`createRoot` warnings in the dev log) and the log holds
-no error or panic — its only warning is an unrelated `~/.cargo/registry` cache-permission notice from
-Cargo itself. What is **not** verified: loading a layout in the running app and reading its score.
-Driving that needs Accessibility permission (an `osascript` call against System Events hangs in an
-unpermitted session) and screen recording (`screencapture` is refused by TCC), so it could not be
-automated here. A maintainer should open the app once before releasing from this branch. Note also
-that no CI job exercises the frontend — `vite build`, `tsc --noEmit` and `oxlint` are local-only, so a
-broken frontend build does not fail CI.
+**FR-018 — the dev loop runs and the click-through was driven.** `bun run tauri dev` compiles
+`oxeylyzer-tauri`, brings the Vite 8.3.4 dev server up on `localhost:1420`, and launches the
+binary; the app registers with the WindowServer and the SolidJS client executes (its only
+warning is an unrelated `~/.cargo/registry` cache-permission notice from Cargo itself). Driven
+through the running window on 2026-10-15 with Accessibility + screen recording granted: the
+Layouts list loads saved layouts with their scores, `Analyze` on `recurva_oxeylyzer` (shai corpus)
+renders the full breakdown — `Sfb 0.718%`, `Dsfb 5.359%`, `Fspeed -1.835`, **`Score 0.441`**,
+`Stretches -9.318`, `Scissors 0.263%`, `LSBs 0.244%`, `Pinky-Ring 1.945%`, `Inrolls 21.161%`,
+`Outrolls 23.584%`, `Total Rolls 44.745%`, `Onehands 1.365%`, `Total Alt. 33.339%`,
+`Total Redir. 5.702%`, `Bad Sfbs 2.335%`, `Sft 0.089%` — plus the finger-load chart and the
+clickable bigram lists.
+
+Cross-checked against the terminal path on the same corpus and layout:
+`printf 'language shai\nanalyze recurva_oxeylyzer\nquit\n' | cargo run` prints **`Score: 0.441`**
+and the same key layout. Every stat matches except three whose last displayed digit differs
+(`Dsfb` 5.359 vs 5.360, `Inrolls` 21.161 vs 21.160, `Total Rolls` 44.745 vs 44.744): the GUI
+formats in JS `toFixed`, the REPL in Rust, and the underlying values are the same. So the IPC
+path, the frontend, and the engine agree.
+
+Note also that no CI job exercises the frontend — `vite build`, `tsc --noEmit` and `oxlint` are
+local-only, so a broken frontend build does not fail CI.
 
 Revisit when `typescript-eslint` supports TS 7 — that is the single condition that would
 reopening the eslint path make sense.

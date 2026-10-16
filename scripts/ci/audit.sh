@@ -3,9 +3,9 @@
 #
 # Why this script exists: cargo-audit 0.22 has no `--config` flag. It reads
 # `./.cargo/audit.toml`, which this repo gitignores, so a bare `cargo audit` on a
-# fresh clone audits with NO allowance list (exit 1 on the recorded transitive
+# fresh checkout audits with NO allowance list (exit 1 on the recorded transitive
 # advisories) while the same tree passes on a machine where someone happens to have
-# remembered the copy step. The allowance list is only authoritative if the gate
+# the staged file left over. The allowance list is only authoritative if the gate
 # actually reads it; staging it here makes local and CI agree by construction.
 #
 # `--deny warnings` fails on every advisory category, not just unsound: FR-004 says
@@ -18,7 +18,6 @@ set -euo pipefail
 config="${1:-audit.toml}"
 stage=".cargo/audit.toml"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
 
 if [ ! -f "$config" ]; then
 	echo "cannot read the allowance list $config" >&2
@@ -27,12 +26,18 @@ fi
 
 # Preserve anything already at the stage path: a personal .cargo/audit.toml stays a
 # personal one, restored after the run rather than quietly replaced by this script.
-[ -f "$stage" ] && mv "$stage" "$tmp/original"
+if [ -f "$stage" ]; then
+	mv "$stage" "$tmp/original"
+fi
+
 cleanup() {
 	rm -f "$stage"
-	[ -f "$tmp/original" ] && mv "$tmp/original" "$stage"
+	if [ -f "$tmp/original" ]; then
+		mv "$tmp/original" "$stage"
+	fi
+	rm -rf "$tmp"
 }
-trap 'cleanup; rm -rf "$tmp"' EXIT
+trap cleanup EXIT
 
 mkdir -p .cargo
 cp "$config" "$stage"
