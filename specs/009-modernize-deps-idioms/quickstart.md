@@ -190,12 +190,17 @@ cat docs/dependency-policy.md
 
 **Expected**: the README names this repo as the maintained fork/trunk and no longer badges or links
 `o-x-e-y/oxeylyzer` as if it were this code's home; the policy file covers MSRV, audit, freshness,
-lockfile, containment, retained-with-rationale deps (`fxhash` and friends), and — new — §9's record of the
-two places the implementation departs from the spec.
+lockfile, containment, retained-with-rationale deps (`fxhash` and friends), the FR-017 before/after
+evidence, and — new — §9's record of the places the implementation departs from the spec. §9 opened
+with two entries; FR-015's closed in Phase 8, so it now carries one (the eslint/oxlint substitution)
+plus the note that exact lexer parity is restored by a token screen rather than by clap itself.
 
 **Verified on this branch**: the CI badge was removed rather than repointed — it targeted
-`github.com/oxey/oxeylyzer`, which 404s, and this fork's GitHub Actions has never run (zero workflow
-runs, because Actions is off by default on forks), so any badge would assert a status that does not exist.
+`github.com/oxey/oxeylyzer`, which 404s, and at the time this fork's GitHub Actions had never run
+(zero workflow runs), so any badge would assert a status that did not exist. Actions has since run
+here — see the gate-status note at the top of `docs/dependency-policy.md` for the green run — so
+re-adding a badge pointed at this repo's own Actions page is now possible; it was simply not
+something this feature should decide.
 Note also that the spec's premise that upstream is "abandoned" is **not accurate**: upstream `main` is
 quiet (2026-06-18) but its `staging` branch is active (26 commits, head 2026-10-03). What is true, and what
 the README now says, is that this repo is the trunk, there is no `upstream` remote, and nothing inherits

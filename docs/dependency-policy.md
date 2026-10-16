@@ -5,12 +5,19 @@ Every statement below has a step in `.github/workflows/ci.yml` and a local repro
 command (see *Local reproduction* at the end); if a step can be disabled, it will drift
 again.
 
-> **Gate status.** Every step here is verified locally on the `009` branch (floor compute,
-> mirror match, `cargo +1.97 check`, `cargo audit --deny unsound`, the allowance lint, and
-> the freshness report all pass or fail as specified). GitHub Actions has **not run on this
-> fork** — the repo reports zero workflow runs, because Actions is off by default on forks.
-> Until Actions is enabled for `kellenff/oxeylyzer`, the gate is enforced by the local
-> commands, and the workflow is what CI will run once it is switched on.
+> **Gate status.** The gate runs in CI and has passed green end to end. Evidence:
+> <https://github.com/kellenff/oxeylyzer/actions/runs/38851095070> (run 2026-10-15, PR #1,
+> all eight steps of `contracts/ci-gate.md` green — fmt, clippy, floor compute, declare-match,
+> `cargo +1.97 check --workspace`, audit, allowance-list lint, freshness, tests). It is the
+> first run this fork ever had: `actions/runs` reported zero for the repository until the PR
+> was opened, because the workflow only had never executed, not because it was broken.
+>
+> Its first attempt failed at step 6 and the cause is worth keeping: `scripts/ci/audit.sh`
+> exited 1 on a clean checkout (a `[ -f … ] && mv …` under `set -e`) while passing locally
+> because a stale `.cargo/audit.toml` happened to be lying around. That is the entire reason
+> the script exists — a gate whose input depends on what a machine happens to have lying
+> around is not a gate — and the run that caught it is the argument for running it for real
+> rather than trusting the local loop.
 
 ## 1. MSRV window rule
 
@@ -223,11 +230,13 @@ by the in-repo `oxeylyzer-repl/src/color.rs`, and `xflags` by clap v4. Verify wi
 
 ## 9. Deviations from the spec as written
 
-One requirement could not be met exactly. It is recorded here rather than left as a
-silent exception, because the honest version of "we are current" includes "and here is
-what we chose instead".
+One requirement could not be met the way the spec assumed, and one requirement's shape is not
+what the spec's wording implies. Both are recorded here rather than left as silent exceptions,
+because the honest version of "we are current" includes "and here is what we did instead".
 
-**FR-015 — exact lexer parity is met by a token screen in front of clap, not by clap.**
+**FR-015 — exact lexer parity is met by a token screen in front of clap, not by clap.** This is
+not an unmet requirement: the surface matches. It is recorded because the spec's wording assumed
+the parser swap alone would preserve it, and it does not.
 clap's own lexer does not reproduce the old parser's: it accepts attached-value forms the
 old parser rejected (`-n5`, `-nn`, `-n=5`, `-c=5`, `--pins=ab`), it takes a lone `-` as a
 positional value, and it rejects hyphen-leading values it accepted (`-a -p`, `-n -5`). No

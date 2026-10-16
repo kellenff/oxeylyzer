@@ -403,3 +403,9 @@ window (`Analyze` on `recurva_oxeylyzer`, shai corpus) and read **`Score 0.441`*
 `printf 'language shai\nanalyze recurva_oxeylyzer\nquit\n' | cargo run`. Three stats differ in their
 last displayed digit (`Dsfb`, `Inrolls`, `Total Rolls`) because the GUI formats with JS `toFixed` and
 the REPL with Rust; the values are the same.
+
+**SC-001/SC-006 CI evidence (T062).** <https://github.com/kellenff/oxeylyzer/actions/runs/38851095070>
+— run 2026-10-15 on PR #1 into `main`, all nine steps green including the four gate steps
+(floor compute 1.97, declare-match, `cargo +1.97 check --workspace`, audit `--deny warnings`,
+allowance lint, freshness). This is the first workflow run in the fork's history; the earlier
+run 38847288322 failed at step 6 on the `set -e` bug in `scripts/ci/audit.sh` described above.
