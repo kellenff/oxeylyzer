@@ -151,11 +151,10 @@ mod flags_parity {
     //!
     //! Every row records the measured accept/reject outcome, captured by driving
     //! `Repl::from_vec` with the exact token stream `parse_flags` feeds it (no program
-    //! name, shlexed line). 167 rows; the baseline was captured from the parser this
-    //! one replaces, and every row where the outcome differs carries a `// DIVERGENT:`
-    //! comment naming the old outcome, so a surface change is a reviewed decision
-    //! rather than an accident. A row that fails for any other reason is a real
-    //! surface regression, not a test-maintenance task.
+    //! name, shlexed line). 167 rows, each the outcome of the xflags parser this one
+    //! replaced. There is no row where the outcome differs: `lexer::check` rejects the
+    //! token shapes the old grammar rejected before clap sees them. A row that fails
+    //! for any other reason is a real surface regression, not a test-maintenance task.
     //!
     //! Accepts compare the `Debug` rendering of `ReplCmd`, which pins variant names,
     //! field names, arity, `Option` vs `Vec` emptiness, repeated-argument order, and
@@ -469,16 +468,8 @@ mod flags_parity {
                 vec!["analyze", "sturdy", "extra", "--nope"],
                 Exp::Err(Class::Unknown),
             ),
-            (
-                vec!["config", "--sfbs=1.5"],
-                Exp::Ok(
-                    "Config(Config { edit: false, sfbs: Some(1.5), sfs: None, inrolls: None, outrolls: None, onehands: None, alternates: None, alternates_sfs: None, redirects: None, redirects_sfs: None, bad_redirects: None, bad_redirects_sfs: None, stretches: None, pinky_ring: None, lateral_penalty: None, trigram_precision: None, max_cores: None })",
-                ),
-            ), // DIVERGENT: the old parser rejected it as Class::UnknownFlag, clap accepts it
-            (
-                vec!["sfbs", "x", "-c=5"],
-                Exp::Ok("Sfbs(Sfbs { name: \"x\", count: Some(5) })"),
-            ), // DIVERGENT: the old parser rejected it as Class::UnknownFlag, clap accepts it
+            (vec!["config", "--sfbs=1.5"], Exp::Err(Class::Unknown)),
+            (vec!["sfbs", "x", "-c=5"], Exp::Err(Class::Unknown)),
             (
                 vec!["generate", "x", "-p", "--count=5"],
                 Exp::Ok(
@@ -497,10 +488,7 @@ mod flags_parity {
                 vec!["generate", "x", "-p", "-c"],
                 Exp::Ok("Generate(Generate { name: \"x\", count: None, pins: Some(\"-c\") })"),
             ),
-            (
-                vec!["generate", "x", "--pins=ab"],
-                Exp::Ok("Generate(Generate { name: \"x\", count: None, pins: Some(\"ab\") })"),
-            ), // DIVERGENT: the old parser rejected it as Class::UnknownFlag, clap accepts it
+            (vec!["generate", "x", "--pins=ab"], Exp::Err(Class::Unknown)),
             (
                 vec!["generate", "x", "--pins"],
                 Exp::Err(Class::MissingValue),
@@ -512,10 +500,7 @@ mod flags_parity {
             (vec!["rank", "--help"], Exp::Err(Class::Help)),
             (vec!["quit", "-y"], Exp::Err(Class::Unknown)),
             (vec!["help", "analyze"], Exp::Err(Class::Help)),
-            (
-                vec!["language", "-"],
-                Exp::Ok("Language(Language { language: Some(\"-\") })"),
-            ), // DIVERGENT: the old parser rejected it as Class::UnknownFlag, clap accepts it
+            (vec!["language", "-"], Exp::Err(Class::Unknown)),
             (vec!["-"], Exp::Err(Class::Unknown)),
             (vec![""], Exp::Err(Class::Unknown)),
             (vec!["", "x"], Exp::Err(Class::Unknown)),
@@ -532,7 +517,7 @@ mod flags_parity {
                 vec!["generate", "x", "-p", "-5"],
                 Exp::Ok("Generate(Generate { name: \"x\", count: None, pins: Some(\"-5\") })"),
             ),
-            (vec!["sfbs", "x", "-c", "-1"], Exp::Err(Class::Unknown)), // DIVERGENT: the old parser rejected it as Class::BadValue, clap rejects it as Class::Unknown
+            (vec!["sfbs", "x", "-c", "-1"], Exp::Err(Class::BadValue)),
             (
                 vec!["config", "--sfbs", "-1.5"],
                 Exp::Ok(

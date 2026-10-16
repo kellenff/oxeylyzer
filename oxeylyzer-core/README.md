@@ -1,6 +1,8 @@
 # oxeylyzer-core
 
-`oxeylyzer-core` is the high-performance layout evaluation and generation engine behind the [Oxeylyzer](https://github.com/o-x-e-y/oxeylyzer) keyboard layout analyzer. It provides data structures and very performant cached algorithms for generating and scoring keyboard layouts.
+`oxeylyzer-core` is the high-performance layout evaluation and generation engine behind the [Oxeylyzer](https://github.com/kellenff/oxeylyzer) keyboard layout analyzer. It provides data structures and very performant cached algorithms for generating and scoring keyboard layouts.
+
+**This crate comes from the maintained fork at [kellenff/oxeylyzer](https://github.com/kellenff/oxeylyzer), which is the trunk for ongoing development.** The original project at [o-x-e-y/oxeylyzer](https://github.com/o-x-e-y/oxeylyzer) is where this engine came from; read it as the origin, not the source of truth for this code's issues or CI. See [docs/dependency-policy.md](../docs/dependency-policy.md) for the dependency policy.
 
 ## Features
 

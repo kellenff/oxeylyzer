@@ -4,11 +4,15 @@ use clap::{Args, Parser, Subcommand};
 
 /// The REPL's argument grammar, one interactive line at a time.
 ///
-/// `try_parse_from` is the only parse path: it RETURNS an error instead of
+/// `from_vec` is the only parse path: it RETURNS an error instead of
 /// printing-and-exiting, because the prompt loop must keep running after a bad
 /// line (contracts/cli-surface.md, FR-015's exit-behavior rule). Same reason
-/// `subcommand_required` is set: a bare line is an error to report, not a
-/// help screen to display-and-exit on.
+/// `subcommand_required` is set: a bare line is an error to report, not a help
+/// screen to display-and-exit on.
+///
+/// Value options all take hyphen-leading values (`--sfbs -1.5` sets a negative
+/// weight, `-p -a` pins the `-a` key); `lexer::check` rejects the token shapes the
+/// old grammar rejected, so the pair is the surface FR-015 froze.
 #[derive(Debug, Parser)]
 #[command(subcommand_required(true))]
 pub struct Repl {
@@ -21,6 +25,7 @@ impl Repl {
     /// the REPL line has no such token, so a dummy is prepended — the token stream
     /// `parse_flags` feeds stays exactly what it was under the old parser.
     pub fn from_vec(args: Vec<std::ffi::OsString>) -> Result<Self, clap::Error> {
+        crate::lexer::check::<Self>(&args)?;
         Self::try_parse_from(std::iter::once(std::ffi::OsString::from("repl")).chain(args))
     }
 }
@@ -147,7 +152,7 @@ macro_rules! top_n {
         #[derive(Debug, Args)]
         pub struct $name {
             pub name: String,
-            #[arg(short = 'c', long)]
+            #[arg(short = 'c', long, allow_hyphen_values(true))]
             pub count: Option<usize>,
         }
     };
@@ -192,58 +197,46 @@ pub struct Ngram {
     pub ngram: String,
 }
 
-#[derive(Debug, Args)]
-pub struct Config {
-    /// Open the config file in $EDITOR (or $VISUAL, vi, notepad as fallbacks).
-    #[arg(long)]
-    pub edit: bool,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub sfbs: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub sfs: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub inrolls: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub outrolls: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub onehands: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub alternates: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub alternates_sfs: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub redirects: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub redirects_sfs: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub bad_redirects: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub bad_redirects_sfs: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub stretches: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub pinky_ring: Option<f64>,
-    #[arg(long, allow_hyphen_values(true))]
-    #[arg(long)]
-    pub lateral_penalty: Option<f64>,
-    #[arg(long)]
-    pub trigram_precision: Option<usize>,
-    #[arg(long)]
-    pub max_cores: Option<usize>,
+/// The weight knobs: fifteen `--flag value` f64 options plus two integer ones.
+/// Listing them twice (declaration and `Debug` order) is what the parity table's
+/// expected strings record, so they stay one macro's width apart.
+macro_rules! config_opts {
+    ($($weight:ident),+ $(,)?) => {
+        /// Show current weights, or modify them.
+        #[derive(Debug, Args)]
+        pub struct Config {
+            /// Open the config file in $EDITOR (or $VISUAL, vi, notepad as fallbacks).
+            #[arg(long)]
+            pub edit: bool,
+            $(
+                /// A weight: a leading dash is a value (`--sfbs -1.5`), not a flag.
+                #[arg(long, allow_hyphen_values(true))]
+                pub $weight: Option<f64>,
+            )+
+            #[arg(long, allow_hyphen_values(true))]
+            pub trigram_precision: Option<usize>,
+            #[arg(long, allow_hyphen_values(true))]
+            pub max_cores: Option<usize>,
+        }
+    };
 }
+
+config_opts!(
+    sfbs,
+    sfs,
+    inrolls,
+    outrolls,
+    onehands,
+    alternates,
+    alternates_sfs,
+    redirects,
+    redirects_sfs,
+    bad_redirects,
+    bad_redirects_sfs,
+    stretches,
+    pinky_ring,
+    lateral_penalty,
+);
 
 #[derive(Debug, Args)]
 pub struct Reload {}

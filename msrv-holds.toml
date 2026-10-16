@@ -5,12 +5,24 @@
 # version and the hold is recorded here. The freshness step reads this file and
 # reports those crates "held (recorded)" instead of "behind" — never silent.
 #
-# The same file records FRONTEND holds (npm packages in oxeylyzer-tauri/package.json,
-# e.g. a plugin that cannot follow vite's Rolldown migration, or a linter chain that
-# cannot support the current TypeScript). `crate` is the npm package name; the
-# freshness step matches it against package.json and reports "held (recorded)" the
-# same way. There is no `required_rust` for those — the reason field carries the
-# blocker, and the hold goes stale when the range can reach latest again.
+# The same file records FRONTEND version holds (npm packages in
+# oxeylyzer-tauri/package.json), with `crate` set to the npm package name and no
+# `required_rust` — the reason field carries the blocker. The freshness step
+# reports such a row "held (recorded)" the same way.
+#
+# A hold is a VERSION hold: the dependency is pinned below the newest version
+# available. It is legal only while the declared range cannot reach that newest
+# version — scripts/ci/freshness.py:170 flags any frontend hold whose range
+# admits the registry `latest` as HOLD STALE and fails the build, and
+# scripts/ci/freshness.py:323 does the same for a Rust hold once its `required_rust`
+# fits the window. A stale hold is a build failure on purpose: it says the hold's
+# reason expired.
+#
+# A dependency SUBSTITUTION cannot be expressed here. Replacing a package outright
+# — the eslint-to-oxlint swap in docs/dependency-policy.md §9 is the live case —
+# leaves the replacement itself at latest, so a row for it would be reported stale
+# immediately and fail the gate. Substitutions are recorded in
+# docs/dependency-policy.md §9 with the condition that would reopen the old path.
 #
 # Fields per [[hold]] entry:
 #   crate         — dependency name being held

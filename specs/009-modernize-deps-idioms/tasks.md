@@ -318,3 +318,50 @@ All 59 tasks are `[X]`. Four things a reviewer should know, because they are not
    impossible — there is no shlex 3, so FR-006's "latest stable" is met at 2.0.1. Separately, spec.md's
    premise that upstream is "abandoned" is contradicted by upstream's active `staging` branch; see
    `docs/dependency-policy.md` §8.
+
+---
+
+## Phase 7: Convergence
+
+Assessed 2026-10-15 against the live tree. Gate re-run clean at assessment time: `fmt` 0 findings,
+`clippy -D warnings` exit 0, `cargo test --workspace` 230 passed / 0 failed, `cargo audit --deny unsound`
+exit 0, `cargo outdated` + `scripts/ci/freshness.py` exit 0 (no unrecorded gaps, no stale holds),
+`rust-window.sh` floor 1.97 == declared `rust-version`, frontend `vite build` + `tsc --noEmit` +
+`oxlint` clean. Two FR-level divergences were found and left un-actioned on purpose — FR-015's exact
+xflags lexer parity is unreachable in clap (documented row-by-row via `// DIVERGENT:` and
+`docs/dependency-policy.md` §9) and FR-018's `eslint 10` is incompatible with its own required
+`typescript 7.0` (documented with its reopen condition in §9). Neither has code work left that does not
+break a different clause of the same requirement.
+
+- [X] T060 Verify the Tauri dev loop that FR-018 requires and T055 skipped: run `bun run tauri dev` in `oxeylyzer-tauri/` and confirm the app loads and analyzes a layout; if no GUI session is available, record the non-verification as an explicit entry in `docs/dependency-policy.md` §9 "Deviations from the spec as written" (alongside the FR-015 and FR-018 entries) so FR-018's dev-loop half is not left silently unevidenced, and name `vite build`/`tsc --noEmit` as the verified halves per FR-018 (partial)
+- [X] T061 Fix the contract mismatch between `msrv-holds.toml:8-11` and `scripts/ci/freshness.py:170-177`: the header promises frontend holds for the case it names verbatim — "a linter chain that cannot support the current TypeScript" — but any frontend hold whose declared range admits the registry `latest` is reported `HOLD STALE` and fails the build, so the oxlint substitution recorded in `docs/dependency-policy.md` §9 cannot be represented there at all. Amend the header to state that this file holds version holds only (`held` behind `latest`, with `required_rust`/`reason`), and point dependency *substitutions* at `docs/dependency-policy.md` §9 instead; confirm `python3 scripts/ci/freshness.py --json outdated.json --holds msrv-holds.toml --floor "$(./scripts/ci/rust-window.sh)"` still exits 0 afterwards per FR-002a (partial)
+
+**Checkpoint**: gate, catch-up, and surface reduction are all verified against the live tree. What is
+left is evidence for FR-018's dev loop and a header that does not promise the gate cannot keep.
+
+---
+
+## Phase 8: Convergence
+
+Assessed 2026-10-15 against the live tree (re-run, independent of Phase 7). Local gate evidence at
+assessment time: `cargo fmt --all -- --check` exit 0, `cargo clippy --all-targets --all-features --
+-D warnings` exit 0, `cargo test --workspace` 230 passed / 0 failed, `./scripts/ci/rust-window.sh`
+prints 1.97 == declared `rust-version`, `python3 scripts/ci/lint-audit-toml.py audit.toml` conforms,
+`python3 scripts/ci/freshness.py ... --floor 1.97` exit 0 (37 Rust + 15 frontend rows, all
+"up to date"; no unrecorded majors, no stale holds). Phase 7's own divergences (FR-015 lexer parity,
+FR-018 eslint) are re-opened below with the concrete buildable path, because both have one.
+Constitution checks skipped — `.specify/memory/constitution.md` is an unfilled template.
+
+- [ ] T062 Run the gate in CI for real: land this branch on `main` (or open the PR into `main`/`staging`) and confirm a single GitHub Actions run executes all eight `contracts/ci-gate.md` steps green, then record that run's URL as the SC-001/SC-006 evidence in `docs/dependency-policy.md` §2 and this file's implementation record. Measured: `gh api repos/kellenff/oxeylyzer/actions/runs` returns `total_count: 0` and `actions/workflows` returns `total_count: 0`, so no workflow has ever executed on this fork; `origin/main` is 74 commits behind this branch and contains zero gate steps, and `ci.yml`'s `on:` block lists only `main`/`staging`, so branch pushes cannot produce a run (missing)
+- [ ] T063 Restore FR-015's exact accept/reject surface in front of clap: add a token-normalizing guard at the two parse entry points (`oxeylyzer-repl/src/commands.rs` before `Repl::from_vec`'s clap call, `oxeylyzer-bench/src/flags.rs` before `parse()`) that rejects the attached-value forms xflags rejected (`-n5`, `-n=5`, `--pins=ab`) and keeps the hyphen-leading-value accepts, so every `// DIVERGENT:` row in both parity tables returns to the recorded baseline outcome and the annotations can be deleted — 16 rows remain today (11 in `oxeylyzer-bench/src/flags.rs`, 5 in `oxeylyzer-repl/src/commands.rs`) per FR-015 / US3-4 / contracts/cli-surface.md (contradicts)
+- [ ] T064 Make the advisory gate deny every advisory category, not just unsound: change the CI step 6 command in `.github/workflows/ci.yml` to `cargo audit --deny warnings` and add the two live ids to `audit.toml`'s `ignore` array with `# reason:` lines — `RUSTSEC-2025-0057` (`fxhash`, retained per §7) and `RUSTSEC-2024-0370` (`proc-macro-error`, transitive via the Linux GTK stack) — measured today: `cargo audit --deny unsound` exits 0 with "2 allowed warnings found" while neither id is recorded, which FR-004's "an unrecorded advisory MUST fail the build" does not allow; if the narrowing is kept instead, record the exception with its reason in `docs/dependency-policy.md` §2 (contradicts)
+- [ ] T065 Produce the FR-017 equivalence evidence T059 claims: run `printf 'analyze sturdy\nquit\n' | cargo run` on `origin/main` and on this branch, diff the score lines, and record both outputs in the PR description plus `docs/dependency-policy.md` §Scope fence. No before/after comparison is recorded anywhere (`grep -rn 'before/after' specs/009-modernize-deps-idioms docs/dependency-policy.md` finds only assertions), and the branch changes the generation path's pair enumeration — `possible_swaps` in `oxeylyzer-core/src/generate.rs` moved from `.tuple_combinations::<(_, _)>().map(Into::into)` to `.array_combinations::<2>().map(|[a, b]| PosPair::from((a, b)))`, plus five `array_combinations` sites in `oxeylyzer-core/src/fast_layout.rs`, where enumeration order is observable (partial)
+- [ ] T066 Put the declared floor on the sixth package: add `rust-version.workspace = true` to the root `[package]` in `Cargo.toml`, which `cargo metadata --format-version 1 --no-deps` currently reports as `oxeylyzer rust-version=None` while all five members report 1.97, so the root binary crate is the one workspace member exempt from the FR-001 window and the FR-002 machine check (partial)
+- [ ] T067 Finish FR-018's dev-loop evidence: drive one layout load and read its score in the running app from `bun run tauri dev` in `oxeylyzer-tauri/`, and record the observed score in `docs/dependency-policy.md` §9 replacing the current "not verified" paragraph. A real GUI session demonstrably exists (`docs/dependency-policy.md:233-244` shows the window coming up and the dev server answering HTTP 200), so the un-driven click-through — not the environment — is what US3-5 and FR-018 still lack (partial)
+- [ ] T068 Add `scripts/ci/audit.sh` that stages the allowance list (`.cargo/audit.toml` from root `audit.toml`), runs the audit, and cleans up; call it from `.github/workflows/ci.yml` step 6 and from `docs/dependency-policy.md` §Local reproduction, so a local run and CI agree. Measured divergence: bare `cargo audit --deny unsound` exits 1 while the same tree exits 0 in CI, because cargo-audit 0.22 only reads `.cargo/audit.toml` — which `.gitignore:17` excludes — so the allowance list is inert unless a human remembers the copy step per FR-004 / contracts/ci-gate.md step 6 (partial)
+- [ ] T069 Retarget the remaining stated-identity carrier: add the maintained-fork statement to `oxeylyzer-core/README.md:3`, which still calls the crate the engine behind "[Oxeylyzer](https://github.com/o-x-e-y/oxeylyzer)" with no indication this fork is the home, the way FR-016 required of the root `README.md` and the two `repository` fields (partial)
+- [ ] T070 Correct the two policy claims the code does not support in `docs/dependency-policy.md`: §3 (lines 113-116) still routes frontend *substitutions* through `msrv-holds.toml` — the contradiction T061 removed from that file's header, which now says substitutions belong in §9 — and §6 (line 157) claims "`cargo outdated` flags yanked versions; the freshness table surfaces them" while `scripts/ci/freshness.py` reads no yanked field from the JSONL rows (`name`/`project`/`compat`/`latest`/`kind`). Either detect yanked rows in the freshness table or state the response without the surfacing claim per FR-002a / the yanked-but-locked edge case (contradicts)
+
+**Checkpoint**: the gate exists and passes locally; this phase is about making it provable where it
+binds (CI, FR-017 measurement, advisory categories) and closing the two MUST clauses Phase 7 left
+documented-but-unmet. T062 is the one that changes the feature's status from "built" to "enforced".

@@ -47,10 +47,14 @@ is deleted — holds must be surfaced and retired, never quietly accumulated.
 
 ## 2. Advisory gate and allowance procedure
 
-CI runs `cargo audit --deny unsound` over the resolved `Cargo.lock`. `--deny unsound`
-matters: several advisories that concern this project (e.g. RUSTSEC-2026-0190 in
-`anyhow`) are *informational* unsoundness notices, which cargo-audit reports but does
-not fail on by default.
+CI runs `scripts/ci/audit.sh`, which stages the allowance list and runs
+`cargo audit --deny warnings` over the resolved `Cargo.lock`. The `--deny warnings`
+matters twice over: several advisories that concern this project (e.g. RUSTSEC-2026-0190
+in `anyhow`) are *informational* unsoundness notices that cargo-audit reports without
+failing on by default, and the gate is not narrowed to unsoundness — an *unmaintained*
+notice is an advisory too, and FR-004 says an unrecorded advisory fails the build. So
+every category is denied, and what is accepted is recorded with a reason rather than
+silenced by narrowing the filter.
 
 An advisory appears → CI goes red → the maintainer chooses exactly one:
 
@@ -70,21 +74,22 @@ ignore = [
 advisory is always discoverable in the repo rather than only in a CI log.
 
 `audit.toml` at the repo root is the editable truth. cargo-audit (0.22) has no
-`--config` flag — it reads `./.cargo/audit.toml` — so CI copies the file into place
-before auditing.
+`--config` flag — it reads `./.cargo/audit.toml`, which this repo gitignores — so the
+allowance list is inert unless a human remembers to copy it. `scripts/ci/audit.sh` is
+what removes that step from the loop: it stages the file, runs the audit, and restores
+whatever was there before, and both CI step 6 and the local command below call it, so a
+local run and CI cannot disagree about which advisories are allowed.
 
 Post-upgrade the list is expected to be **empty in principle**; in practice it holds
-what the window cannot reach. Current entries (each carries its reason in `audit.toml`):
-`RUSTSEC-2024-0429` (glib, via the Tauri GTK stack) and `RUSTSEC-2026-0186` (memmap2,
-pinned by `file-chunker`). Both are transitive, neither is reachable at a patched version
-without dropping the crate that pins it, and both reasons name the condition that retires
-them.
-
-Separately, `fxhash` and `proc-macro-error` raise *unmaintained* warnings that
-`--deny unsound` does not fail on. `fxhash` is retained deliberately (§7);
-`proc-macro-error` is transitive — it enters only through `glib-macros`/`gtk3-macros` in
-the Linux Tauri GTK stack (it is not even in the macOS dependency graph), so it moves when
-the Tauri stack updates its macros, not when we choose to.
+what the window cannot reach. Current entries, each with a `# reason:` line in
+`audit.toml`: `RUSTSEC-2024-0429` (glib, via the Tauri GTK stack) and `RUSTSEC-2026-0186`
+(memmap2, pinned by `file-chunker`) — both transitive, neither reachable at a patched
+version without dropping the crate that pins it. Plus two *unmaintained* notices that
+`--deny warnings` now fails on: `RUSTSEC-2025-0057` (`fxhash`, retained deliberately per
+§7) and `RUSTSEC-2024-0370` (`proc-macro-error`, transitive through
+`glib-macros`/`gtk3-macros` in the Linux Tauri GTK stack — it is not even in the macOS
+dependency graph, so it moves when the Tauri stack updates its macros, not when we choose
+to).
 
 ## 3. Freshness report and hold procedure
 
@@ -110,10 +115,17 @@ would have left it silent:
   never silently passed;
 - registry unreachable → build red with the gate-unavailable message, fail-closed.
 
-Frontend holds use the same `msrv-holds.toml` entries, keyed by package name; T056's
-"pin with a reason and surface it" resolves through this path. `npm_latest` shells out
-to `curl` rather than using urllib, because a framework python on macOS has no CA
-bundle and would otherwise fail the gate closed on a machine that is fine.
+Frontend version holds use the same `msrv-holds.toml` entries, keyed by package name; a
+recorded hold whose declared range already admits the registry latest is reported
+`HOLD STALE` and fails the build, so a hold only survives while the range genuinely
+cannot reach the newest version. `npm_latest` shells out to `curl` rather than using
+urllib, because a framework python on macOS has no CA bundle and would otherwise fail
+the gate closed on a machine that is fine.
+
+A frontend dependency **substitution** — replacing a package outright, like the
+eslint-to-oxlint swap in §9 — is not a version hold and is not recorded here: the
+replacement is at latest, so a row for it would be stale on arrival. Substitutions
+live in §9 with the condition that would reopen the old path.
 
 No manual registry query is ever required, on either side of the repo: one CI log
 answers "what are we behind on, and by how much".
@@ -154,11 +166,15 @@ that the sentinel not claim a partial extraction).
 
 ## 6. Yanked-but-locked
 
-`cargo outdated` flags yanked versions; the freshness table surfaces them. Response:
-report it, then `cargo update -p <crate>` in the next maintenance pass. Yanked status
-does not fail the build by itself (cargo-audit's `--deny yanked` is intentionally not
-set: a yanked-but-unaffected transitive dependency is a schedule question, not a
-security one).
+Nothing in the gate surfaces a yanked-but-locked dependency. Measured: `cargo outdated`
+has no yanked flag, and the JSONL rows it emits (`name`, `project`, `compat`, `latest`,
+`kind`, `platform`) carry no yanked field, so the freshness table cannot show one. This
+sentence used to claim it did; it is corrected rather than implemented, because
+detecting yanked versions would mean a per-dependency registry query the rest of the gate
+deliberately does not make. Response when Cargo's resolver does report one on a fresh
+resolution: `cargo update -p <crate>` in the next maintenance pass. Yanked status does
+not fail the build by itself (cargo-audit's `--deny yanked` is intentionally not set: a
+yanked-but-unaffected transitive dependency is a schedule question, not a security one).
 
 ## 7. Retained dependencies with rationale
 
@@ -207,19 +223,24 @@ by the in-repo `oxeylyzer-repl/src/color.rs`, and `xflags` by clap v4. Verify wi
 
 ## 9. Deviations from the spec as written
 
-Two requirements could not be met exactly. Both are recorded here rather than left as
-silent exceptions, because the honest version of "we are current" includes "and here is
+One requirement could not be met exactly. It is recorded here rather than left as a
+silent exception, because the honest version of "we are current" includes "and here is
 what we chose instead".
 
-**FR-015 — clap does not reproduce xflags' lexer, byte for byte.** The requirement says
-the REPL and bench "MUST accept and reject exactly what they do today". Measured against
-clap 4.6: it accepts attached-value forms the old parser rejected (`-n5`, `-n=5`,
-`--pins=ab`) and rejects hyphen-leading values it accepted (`-p -a`). No clap knob
-closes this (`require_equals` is worse — it breaks every space-separated form), so the
-port is **idiomatic clap**, and every differing row in the two parity tables carries a
-`// DIVERGENT:` comment naming the old outcome. Behavior deliberately preserved:
-`allow_hyphen_values` on `--pins` and the `config` f64 weight flags, because a leading
-`-` is real data there (`-p a-b` pins the hyphen key; `--sfbs -1.5` is a negative weight).
+**FR-015 — exact lexer parity is met by a token screen in front of clap, not by clap.**
+clap's own lexer does not reproduce the old parser's: it accepts attached-value forms the
+old parser rejected (`-n5`, `-nn`, `-n=5`, `-c=5`, `--pins=ab`), it takes a lone `-` as a
+positional value, and it rejects hyphen-leading values it accepted (`-a -p`, `-n -5`). No
+clap knob closes this — `require_equals` is worse, it breaks every space-separated form.
+So the surface is restored in two parts: every value-taking option is declared
+`allow_hyphen_values` (a leading `-` is real data: `-p a-b` pins the hyphen key,
+`--sfbs -1.5` is a negative weight), and `oxeylyzer-repl/src/lexer.rs::check` screens the
+token stream at the two parse entry points, rejecting the shapes the old grammar never
+looked up. The screen reads clap's own arg metadata for which options take a value rather
+than restating the grammar, and a value-taking option swallows the token after it, so
+`generate x -p --count=5` still pins the literal `--count=5`. Result: all 59 bench rows
+and all 167 REPL rows match the frozen baseline captured from the xflags parser before
+the swap, with no divergence annotations left to record.
 
 **FR-018 — eslint is replaced by oxlint, not upgraded to eslint 10.** `typescript 7.0` and
 `eslint 10` cannot coexist: `typescript-eslint` throws `does not support TS 7.0` at its
@@ -230,6 +251,19 @@ and `oxlint` (the Oxc linter, matching the Rolldown/Oxc bundler now in the build
 replaced it. `eslint.config.js` is deleted. Lint coverage was verified by planting unused
 variables and a constant condition in both `.ts` and `.tsx`: oxlint flags both.
 
+**FR-018 — the dev loop runs; the click-through was not driven.** `bun run tauri dev` was run
+2026-10-15 in a real Aqua session and does work: it compiles `oxeylyzer-tauri`, brings the Vite 8.3.4
+dev server up on `localhost:1420` (HTTP 200), and launches the binary. The app registers with the
+WindowServer and spawns its `Networking` and `Graphics and Media` helpers, so the WebView window
+really comes up; the SolidJS client executes (`createRoot` warnings in the dev log) and the log holds
+no error or panic — its only warning is an unrelated `~/.cargo/registry` cache-permission notice from
+Cargo itself. What is **not** verified: loading a layout in the running app and reading its score.
+Driving that needs Accessibility permission (an `osascript` call against System Events hangs in an
+unpermitted session) and screen recording (`screencapture` is refused by TCC), so it could not be
+automated here. A maintainer should open the app once before releasing from this branch. Note also
+that no CI job exercises the frontend — `vite build`, `tsc --noEmit` and `oxlint` are local-only, so a
+broken frontend build does not fail CI.
+
 Revisit when `typescript-eslint` supports TS 7 — that is the single condition that would
 reopening the eslint path make sense.
 
@@ -239,6 +273,37 @@ This feature is dependency foundation only. It deliberately excludes: `fxhash`
 replacement, general Rust idiom sweeps, corpus cleaning changes, data-version changes,
 and any edit to scoring or generation algorithms. Computed results must be identical
 before and after (FR-017).
+
+### FR-017 evidence (measured 2026-10-15)
+
+`printf 'analyze sturdy\nquit\n' | cargo run` on `origin/main` (`d015a16`, the fork's tip,
+pre-branch) and on this branch, each run as its own build from a detached worktree of
+`origin/main` versus the working tree, so neither reuses the other's binary:
+
+```text
+main:    sha256 54cd12b2e5b0000ad33f9539f5c61cb5714be32ef8a42294d0b7c0a582f03410  (1355 bytes, exit 0)
+branch:  sha256 54cd12b2e5b0000ad33f9539f5c61cb5714be32ef8a42294d0b7c0a582f03410  (1355 bytes, exit 0)
+diff:    no differences
+```
+
+Every score line is identical, `Sfb: 0.866%`, `Dsfb: 5.509%`, `Finger Speed: -1.785`,
+`Stretches: -13.110%`, `Scissors: 0.081%`, `Lsbs: 2.254%`, `Pinky Ring Bigrams: 2.473%`,
+`Inrolls: 21.325%`, `Outrolls: 23.259%`, `Total Rolls: 44.584%`, `Onehands: 1.939%`,
+`Alternates: 27.305%`, `Alternates (sfs): 6.060%`, `Total Alternates: 33.364%`,
+`Redirects: 2.570%`, `Redirects Sfs: 2.024%`, `Bad Redirects: 0.144%`,
+`Bad Redirects Sfs: 0.161%`, `Total Redirects: 4.900%`, `Bad Sfbs: 2.011%`, `Sft: 0.063%`,
+`Score: 0.468`.
+
+This is the evidence T059 claimed but did not record, and it covers `analyze` only: the
+scoring path, not the generator. The generation path did change on this branch —
+`possible_swaps` in `oxeylyzer-core/src/generate.rs` moved from
+`.tuple_combinations::<(_, _)>().map(Into::into)` to `.array_combinations::<2>().map(|[a, b]| PosPair::from((a, b)))`,
+plus five `array_combinations` sites in `oxeylyzer-core/src/fast_layout.rs` — and
+enumeration order is observable there. Both combinators yield the same pairs in the same
+order for a pair enumeration, which is why nothing changed, but a single-layout score is
+not a proof of that. Generation is not reproducible run to run either way (the RNG is
+`nanorand` with no seed API), so a generator comparison is a distribution claim, not a
+byte claim, and is out of scope for this feature.
 
 ## Local reproduction
 
@@ -254,16 +319,17 @@ grep -n 'rust-version' Cargo.toml
 # step 5 — the floor really builds
 cargo +"$(./scripts/ci/rust-window.sh)" check --workspace
 
-# steps 6+7 — audit with the allowance list, then lint the allowance list
-mkdir -p .cargo && cp audit.toml .cargo/audit.toml
-cargo audit --deny unsound
+# step 6 — audit with the allowance list staged, the same way CI runs it
+./scripts/ci/audit.sh
+
+# step 7 — lint the allowance list
 python3 scripts/ci/lint-audit-toml.py audit.toml
 
 # step 8 — freshness: Rust majors + the npm frontend, both gating
 cargo outdated --workspace --format json > outdated.json
 python3 scripts/ci/freshness.py --json outdated.json \
   --holds msrv-holds.toml --floor "$(./scripts/ci/rust-window.sh)"
-rm -f outdated.json .cargo/audit.toml
+rm -f outdated.json
 
 # the npm range rules, without a network
 python3 scripts/ci/freshness.py --self-check --json /dev/null --floor 0

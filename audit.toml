@@ -7,12 +7,17 @@
 # One id per line; that format is what the lint enforces.
 #
 # cargo-audit 0.22 has no `--config` flag: it reads `./.cargo/audit.toml` first and
-# falls back to `~/.cargo/audit.toml`. CI therefore copies this file to
-# `.cargo/audit.toml` before running `cargo audit`. This file is the single truth.
+# falls back to `~/.cargo/audit.toml`. `scripts/ci/audit.sh` stages this file into
+# place before auditing, so a local run and CI read the same allowance list. This
+# file is the single truth.
 [advisories]
 ignore = [
   # reason: glib via tauri gtk stack; glib 0.20 outside tauri v2's reach; affected VariantStrIter fns never called. Revisit when tauri moves to glib >= 0.20.
   "RUSTSEC-2024-0429",
   # reason: memmap2 via file-chunker (pins 0.5.x); patched 0.9.11 unreachable there; affected async advise/flush fns never called. Revisit if file-chunker is replaced.
   "RUSTSEC-2026-0186",
+  # reason: fxhash retained deliberately for hot-path layout maps (docs/dependency-policy.md SS7); no stdlib equivalent with the same cost. Revisit if hash fixation ever matters, benchmark first.
+  "RUSTSEC-2025-0057",
+  # reason: proc-macro-error is transitive via glib-macros/gtk3-macros in the Linux tauri GTK stack (absent from the macOS graph); unmaintained, not vulnerable. Revisit when the tauri stack updates its proc macros.
+  "RUSTSEC-2024-0370",
 ]

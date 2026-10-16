@@ -40,24 +40,26 @@ no network.
 ## 2. Advisory gate (US1-1/2, FR-003/4, SC-001)
 
 ```bash
-mkdir -p .cargo && cp audit.toml .cargo/audit.toml   # cargo-audit 0.22 has no --config flag
-cargo audit --deny unsound          # exit 0; --deny unsound is what makes it bite
-cat audit.toml                      # allowance list; every ignore id has a "# reason:" line above it
+./scripts/ci/audit.sh               # stages audit.toml, runs `cargo audit --deny warnings`, restores
+python3 scripts/ci/lint-audit-toml.py audit.toml   # every ignore id has a "# reason:" line above it
 ```
 
 **Corrected while walking this on 2026-10-14/15:** two things the text above got wrong.
 (1) Plain `cargo audit` exits 0 even with an advisory present — RUSTSEC-2026-0190 is an
-*unsound* informational, so the gate command is `cargo audit --deny unsound` (which is
-what `ci.yml` runs). (2) The allowance list is **not** empty: it carries two reasoned
-transitive entries (`RUSTSEC-2024-0429` glib via the Tauri GTK stack, `RUSTSEC-2026-0186`
-memmap2 pinned by `file-chunker`), each with its `# reason:` line. `fxhash` and
-`proc-macro-error` additionally raise *unmaintained* warnings that `--deny unsound`
-does not fail on — see `docs/dependency-policy.md` §2 and §7.
+*unsound* informational, so a `--deny` flag is what makes it bite; and cargo-audit 0.22
+has no `--config` flag, so the allowance list is only read from `./.cargo/audit.toml`.
+`scripts/ci/audit.sh` does both, and both CI step 6 and this command call it, so a local
+run and CI read the same list. (2) The allowance list is **not** empty: it carries four
+reasoned entries — `RUSTSEC-2024-0429` (glib via the Tauri GTK stack) and
+`RUSTSEC-2026-0186` (memmap2 pinned by `file-chunker`), plus two *unmaintained* notices
+that `--deny warnings` fails on where `--deny unsound` did not: `RUSTSEC-2025-0057`
+(`fxhash`, retained deliberately, §7) and `RUSTSEC-2024-0370` (`proc-macro-error`,
+transitive via the Linux GTK macros). See `docs/dependency-policy.md` §2 and §7.
 
 **Negative test (the US1-1 check)**: pin `anyhow = "=1.0.102"` in the workspace manifest,
-run `cargo generate-lockfile && cargo audit --deny unsound` → must fail (exit 1) naming
+run `cargo generate-lockfile && ./scripts/ci/audit.sh` → must fail (exit 1) naming
 `RUSTSEC-2026-0190` and `anyhow`. Add `RUSTSEC-2026-0190` to `audit.toml` with a reason →
-`cargo audit --deny unsound` and `python3 scripts/ci/lint-audit-toml.py audit.toml` both
+`./scripts/ci/audit.sh` and `python3 scripts/ci/lint-audit-toml.py audit.toml` both
 pass. Revert. Verified this way on the branch.
 
 ## 3. Rust-side dependency currency (US2-1/2, FR-006/7/8, SC-004)
@@ -132,17 +134,17 @@ printf 'rm foo -y\nbadcmd --nope\nquit\n' | cargo run   # rejection prints an er
 cargo run --release -p oxeylyzer-bench -- -n 5 -a hill,sa --headless
 ```
 
-**Expected**: the tables pass, and every row where the new parser's outcome differs from the old one is
-annotated in place with `// DIVERGENT:` naming the old outcome (11 of 59 bench rows, 5 of 167 REPL rows).
+**Expected**: the tables pass, and every row's outcome equals the frozen xflags baseline — there is
+no row where it differs, so there are no divergence annotations left to read.
 
-**This expectation was corrected while implementing T048/T049.** FR-015's "accept and reject exactly what
-they do today" is not achievable with clap: clap's lexer accepts attached-value forms the old parser
-rejected (`-n5`, `-n=5`, `--pins=ab`) and rejects hyphen-leading values it accepted (`-p -a`), and no clap
-knob closes that (`require_equals` is worse — it breaks every space-separated form). The decision taken was
-**idiomatic clap with the divergences recorded**, not exotic opt-ins to mimic a dead parser. Real behavior
-is preserved where the old acceptance was load-bearing: `allow_hyphen_values` on `--pins` and on the
-`config` f64 weight flags, so `-p a-b` (pin the hyphen key) and `--sfbs -1.5` (negative weight) still work.
-`docs/dependency-policy.md` §9 carries the full record.
+**This expectation was corrected twice.** T048/T049 first recorded that FR-015's "accept and reject
+exactly what they do today" was unreachable in clap, and kept the 16 differing rows annotated with
+`// DIVERGENT:`. T063 then closed the gap: every value-taking option is declared `allow_hyphen_values`
+(a leading `-` is real data — `-p a-b` pins the hyphen key, `--sfbs -1.5` is a negative weight), and
+`oxeylyzer-repl/src/lexer.rs::check` screens the token stream at both parse entry points, rejecting the
+shapes the old grammar never looked up (`-n5`, `-nn`, `-n=5`, `-c=5`, `--pins=ab`, a lone `-`). All 59
+bench rows and all 167 REPL rows now match the baseline captured from the xflags parser before the
+swap. `docs/dependency-policy.md` §9 carries the record.
 
 Unchanged and still asserted here: for the REPL a rejection is a returned `Err` printed by the prompt loop
 — never a process exit (`try_get_matches_from`, not `parse`); for bench the exit-on-error path is identical

@@ -77,14 +77,7 @@ jobs:
         run: cargo install cargo-audit cargo-outdated --locked
 
       - name: Advisory audit (step 6)
-        run: |
-          # cargo-audit 0.22 has no --config flag; it reads ./.cargo/audit.toml.
-          mkdir -p .cargo
-          cp audit.toml .cargo/audit.toml
-          # --deny unsound: RUSTSEC-2026-0190 (anyhow) is an unsound
-          # informational; FR-003/US1-1 require the gate to bite on it when
-          # it is not recorded in audit.toml.
-          cargo audit --deny unsound
+        run: ./scripts/ci/audit.sh
 
       - name: Allowance-list lint (step 7)
         run: python3 scripts/ci/lint-audit-toml.py audit.toml
