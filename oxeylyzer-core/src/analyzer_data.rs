@@ -2,6 +2,72 @@ use std::sync::Arc;
 
 use crate::{char_mapping::CharMapping, data::Data, weights::Weights};
 
+#[cfg(test)]
+mod scoring_regressions {
+    use super::*;
+
+    #[test]
+    fn generation_trigrams_prioritize_frequency_and_break_ties_by_characters() {
+        let mut data = Data::default();
+        data.chars.extend([('a', 1.0), ('b', 1.0), ('c', 1.0)]);
+        data.trigram_total = 100;
+        data.trigrams.extend([
+            (['c', 'b', 'a'], 10.0),
+            (['b', 'a', 'c'], 40.0),
+            (['a', 'b', 'c'], 40.0),
+        ]);
+        let analyzer = AnalyzerData::new(data, &Weights::default());
+        let decoded: Vec<_> = analyzer
+            .gen_trigrams()
+            .iter()
+            .map(|(ids, count)| (ids.map(|id| analyzer.mapping.get_c(id)), *count))
+            .collect();
+        assert_eq!(
+            decoded,
+            vec![
+                (['a', 'b', 'c'], 40),
+                (['b', 'a', 'c'], 40),
+                (['c', 'b', 'a'], 10)
+            ]
+        );
+        assert_eq!(decoded.iter().take(0).count(), 0);
+        assert_eq!(decoded.iter().take(2).count(), 2);
+        assert_eq!(decoded.iter().take(99).count(), 3);
+    }
+
+    #[test]
+    fn zero_sfb_preserves_configured_skipgrams_and_stretches() {
+        let mut data = Data::default();
+        data.chars.extend([('a', 50.0), ('b', 50.0)]);
+        data.bigram_total = 100;
+        data.skipgram_total = 100;
+        data.skipgram2_total = 100;
+        data.skipgram3_total = 100;
+        data.bigrams.insert(['a', 'b'], 10.0);
+        data.skipgrams.insert(['a', 'b'], 20.0);
+        data.skipgrams2.insert(['a', 'b'], 30.0);
+        data.skipgrams3.insert(['a', 'b'], 40.0);
+        let mut weights = Weights::default();
+        weights.sfbs = 0.0;
+        weights.sfs = -1.0;
+        weights.stretches = -0.3;
+        let analyzer = AnalyzerData::new(data.clone(), &weights);
+        for pair in [['a', 'b'], ['b', 'a']] {
+            assert_eq!(analyzer.get_same_finger_weighted_bigram(pair), -90);
+            assert_eq!(analyzer.get_stretch_weighted_bigram(pair), -30);
+        }
+        weights.sfs = 0.0;
+        let analyzer = AnalyzerData::new(data.clone(), &weights);
+        assert_eq!(analyzer.get_same_finger_weighted_bigram(['a', 'b']), 0);
+        assert_eq!(analyzer.get_stretch_weighted_bigram(['a', 'b']), -3);
+        weights.sfbs = -2.0;
+        weights.sfs = -1.0;
+        let analyzer = AnalyzerData::new(data, &weights);
+        assert_eq!(analyzer.get_same_finger_weighted_bigram(['a', 'b']), -65);
+        assert_eq!(analyzer.get_stretch_weighted_bigram(['a', 'b']), -9);
+    }
+}
+
 /// Optimized data structure for layout analysis, containing frequency information for various n-grams.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AnalyzerData {
@@ -128,8 +194,10 @@ impl AnalyzerData {
             trigrams[i] = (convert_f(f) * trigram_total as f64) as i64;
         }
 
-        let gen_trigrams = data
-            .trigrams
+        let mut ordered_trigrams = data.trigrams.into_iter().collect::<Vec<_>>();
+        ordered_trigrams
+            .sort_unstable_by(|(a, fa), (b, fb)| fb.total_cmp(fa).then_with(|| a.cmp(b)));
+        let gen_trigrams = ordered_trigrams
             .into_iter()
             .map(|([c1, c2, c3], f)| {
                 let u1 = mapping.get_u(c1);
@@ -139,7 +207,11 @@ impl AnalyzerData {
             })
             .collect::<Box<_>>();
 
-        let dsfb_ratio = weights.sfs / weights.sfbs;
+        let dsfb_ratio = if weights.sfbs == 0.0 {
+            0.0
+        } else {
+            weights.sfs / weights.sfbs
+        };
 
         let sfwb = bigrams
             .iter()
@@ -147,6 +219,9 @@ impl AnalyzerData {
             .zip(&skipgrams2)
             .zip(&skipgrams3)
             .map(|(((&b, &s), &s2), &s3)| {
+                if weights.sfbs == 0.0 {
+                    return ((s as f64 + s2 as f64 + s3 as f64) * weights.sfs) as i64;
+                }
                 let sfb = b as f64;
                 let sfs = (s as f64) * dsfb_ratio;
                 let sfs2 = (s2 as f64) * dsfb_ratio.powi(2);
@@ -161,6 +236,14 @@ impl AnalyzerData {
             .zip(&skipgrams2)
             .zip(&skipgrams3)
             .map(|(((&b, &s), &s2), &s3)| {
+                if weights.sfbs == 0.0 {
+                    let skips = if weights.sfs == 0.0 {
+                        0.0
+                    } else {
+                        s as f64 + s2 as f64 + s3 as f64
+                    };
+                    return ((b as f64 + skips) * weights.stretches) as i64;
+                }
                 let sfb = b as f64;
                 let sfs = (s as f64) * dsfb_ratio;
                 let sfs2 = (s2 as f64) * dsfb_ratio.powi(2);

@@ -361,10 +361,8 @@ where {
         let scissors =
             ((self.scissor_percent(layout) as f64) / self.data.bigram_total as f64) * 100.0;
         let lsbs = ((self.lsb_percent(layout) as f64) / self.data.bigram_total as f64) * 100.0;
-        let pinky_ring = ((self.pinky_ring_score(layout) as f64
-            / self.weights.pinky_ring_bigrams as f64)
-            / self.data.bigram_total as f64)
-            * 100.0;
+        let pinky_ring =
+            (self.pinky_ring_count(layout) as f64 / self.data.bigram_total as f64) * 100.0;
         let trigram_stats = self
             .trigram_stats(layout, usize::MAX)
             .to_stats(self.data.trigram_total);
@@ -516,15 +514,7 @@ where {
         #[cfg(test)]
         ANALYZED_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        let fspeed_usage = Finger::FINGERS
-            .into_iter()
-            .map(|f| self.finger_usage(layout, f) + self.finger_fspeed(layout, f))
-            .sum::<i64>();
-
-        let pinky_ring = self.pinky_ring_score(layout);
-        let trigram_score = self.trigram_score_iter(layout, self.data.gen_trigrams());
-
-        trigram_score + fspeed_usage + pinky_ring
+        self.score_with_precision(layout, usize::MAX)
     }
 
     /// Calculates the total score for a given layout.
@@ -666,6 +656,10 @@ where {
     }
 
     fn pinky_ring_score(&self, layout: &FastLayout) -> i64 {
+        self.pinky_ring_count(layout) * self.weights.pinky_ring_bigrams
+    }
+
+    fn pinky_ring_count(&self, layout: &FastLayout) -> i64 {
         let mut res = 0;
 
         for &PosPair(p1, p2) in layout.pinky_ring_indices.pairs.iter() {
@@ -677,7 +671,7 @@ where {
             }
         }
 
-        res * self.weights.pinky_ring_bigrams
+        res
     }
 
     fn stretch_score(&self, layout: &FastLayout) -> i64 {
@@ -1156,6 +1150,31 @@ mod tests {
 
         GEN.fast_layout(&layout, &[])
     });
+
+    #[test]
+    fn full_score_includes_stretch() {
+        assert_ne!(GEN.stretch_score(&QWERTY), 0);
+        assert_eq!(GEN.score(&QWERTY), GEN.get_layout_stats(&QWERTY).score);
+        assert_eq!(
+            GEN.score(&QWERTY),
+            GEN.score_with_precision(&QWERTY, usize::MAX)
+        );
+    }
+
+    #[test]
+    fn pinky_ring_statistic_does_not_depend_on_weight() {
+        let base = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."));
+        let mut config = Config::with_loaded_weights(base.join("config.toml")).unwrap();
+        let data = Data::load(base.join(&config.corpus)).unwrap();
+        let weighted = Oxeylyzer::new(data.clone(), config.clone());
+        config.weights.pinky_ring_bigrams = 0.0;
+        let zero = Oxeylyzer::new(data, config);
+        let expected = weighted.get_layout_stats(&QWERTY).pinky_ring;
+        let actual = zero.get_layout_stats(&QWERTY).pinky_ring;
+        assert!(expected.is_finite() && expected > 0.0);
+        assert_eq!(actual, expected);
+        assert!(serde_json::to_value(actual).unwrap().is_number());
+    }
 
     #[test]
     fn per_char_trigrams_symmetry() {
