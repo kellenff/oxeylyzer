@@ -1,6 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Layout, BigramEntry, TrigramEntry, NgramResult } from "./types";
 
+export type StoreSnapshot = {
+  layouts: Layout[];
+  languages: string[];
+  currentLanguage: string;
+  charFrequencies: Record<string, number>;
+};
+
+export async function getStoreSnapshot(): Promise<StoreSnapshot> {
+  return invoke("get_store_snapshot");
+}
+
 export async function listLayouts(): Promise<Layout[]> {
   return invoke("list_layouts");
 }
@@ -148,12 +159,17 @@ export type ConfigDto = {
   weights: WeightsDto;
 };
 
-export async function getConfig(): Promise<ConfigDto> {
+export type ConfigSnapshotDto = {
+  config: ConfigDto;
+  revision: number[];
+};
+
+export async function getConfig(): Promise<ConfigSnapshotDto> {
   return invoke("get_config");
 }
 
-export async function setConfig(configDto: ConfigDto): Promise<void> {
-  return invoke("set_config", { configDto });
+export async function setConfig(configDto: ConfigDto, revision: number[]): Promise<number[]> {
+  return invoke("set_config", { configDto, revision });
 }
 
 export async function getDefaults(): Promise<ConfigDto> {

@@ -11,6 +11,19 @@ env:
   RUSTFLAGS: -Dwarnings
 
 jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: oxeylyzer-tauri
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run test
+
   ci:
     runs-on: ubuntu-latest
 
@@ -52,3 +65,6 @@ jobs:
 
       - name: Run tests
         run: cargo test-all
+
+      - name: Check native config watcher
+        run: cargo test -p oxeylyzer-tauri --lib watcher_native_atomic_replacement_keeps_monitoring -- --ignored

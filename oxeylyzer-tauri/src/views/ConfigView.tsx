@@ -40,6 +40,7 @@ function NumInput(props: {
 
 export default function ConfigView() {
   const [config, setConfigState] = createSignal<ConfigDto | null>(null);
+  const [revision, setRevision] = createSignal<number[] | null>(null);
   const [saving, setSaving] = createSignal(false);
   const [msg, setMsg] = createSignal<{ text: string; ok: boolean } | null>(null);
   const [presetName, setPresetName] = createSignal("");
@@ -48,7 +49,8 @@ export default function ConfigView() {
   onMount(async () => {
     try {
       const [cfg, ps] = await Promise.all([getConfig(), listWeightPresets()]);
-      setConfigState(cfg);
+      setConfigState(cfg.config);
+      setRevision(cfg.revision);
       setPresets(ps);
     } catch (e) {
       setMsg({ text: String(e), ok: false });
@@ -87,11 +89,12 @@ export default function ConfigView() {
 
   async function handleSave() {
     const c = config();
-    if (!c) return;
+    const base = revision();
+    if (!c || !base || saving()) return;
     setSaving(true);
     setMsg(null);
     try {
-      await setConfig(c);
+      setRevision(await setConfig(c, base));
       await refreshStore();
       setMsg({ text: "Config saved and engine reloaded.", ok: true });
     } catch (e) {
