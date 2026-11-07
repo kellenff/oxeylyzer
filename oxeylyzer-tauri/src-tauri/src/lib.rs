@@ -19,6 +19,8 @@ use oxeylyzer_resources::OxeylyzerDirs;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
+mod generated_layout;
+
 // ─── DTOs ─────────────────────────────────────────────────────────────────────
 
 #[derive(Serialize, Clone)]
@@ -1091,10 +1093,7 @@ fn save_generated(
         .join(&file_name)
         .with_extension("dof");
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&path, &json).map_err(|e| format!("Write failed: {e}"))?;
+    generated_layout::write_new(&path, &json)?;
 
     // Add to loaded layouts.
     let layout_loaded = Layout::load(&path).map_err(|e| e.to_string())?;
