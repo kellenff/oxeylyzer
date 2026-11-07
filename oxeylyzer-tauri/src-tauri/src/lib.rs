@@ -1067,6 +1067,7 @@ fn save_generated(
             .map(|&u| engine.mapping.get_c(u))
             .collect::<String>()
     });
+    validate_filename(&save_name)?;
     fl.name = Some(save_name.clone());
 
     // Serialize to .dof JSON, clearing provenance fields from the base layout.
@@ -1085,13 +1086,7 @@ fn save_generated(
 
     // Write to the layouts directory for the current language.
     let lang = engine.language.clone();
-    let file_name = save_name.replace(' ', "_").to_lowercase();
-    let path = state
-        .dirs
-        .layouts_dir()
-        .join(&lang)
-        .join(&file_name)
-        .with_extension("dof");
+    let path = layout_path(&state.dirs.layouts_dir(), &lang, &save_name)?;
 
     generated_layout::write_new(&path, &json)?;
 
@@ -1112,16 +1107,36 @@ fn cancel_generate(state: tauri::State<'_, AppState>) {
     state.cancel_flag.store(true, Ordering::Relaxed);
 }
 
+fn validate_filename(name: &str) -> Result<(), String> {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', ':']) {
+        return Err("Name must be a single filename without path separators".to_string());
+    }
+    Ok(())
+}
+
+fn layout_path(dir: &Path, language: &str, name: &str) -> Result<PathBuf, String> {
+    validate_filename(language).map_err(|e| format!("Invalid corpus language: {e}"))?;
+    validate_filename(name)?;
+    let filename = name.replace(' ', "_").to_lowercase();
+    validate_filename(&filename)?;
+    Ok(dir.join(language).join(filename).with_extension("dof"))
+}
+
+fn preset_path(dir: &std::path::Path, name: &str) -> Result<std::path::PathBuf, String> {
+    validate_filename(name)?;
+    Ok(dir.join(name).with_extension("toml"))
+}
+
 #[tauri::command]
 fn delete_layout(name: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let lang = state.engine.lock().unwrap().language.clone();
-    let file_name = name.replace(' ', "_").to_lowercase();
-    let path = state
-        .dirs
-        .layouts_dir()
-        .join(&lang)
-        .join(&file_name)
-        .with_extension("dof");
+    delete_layout_file(&state.dirs.layouts_dir(), &lang, &name)?;
+    state.layouts.lock().unwrap().remove(&name.to_lowercase());
+    Ok(())
+}
+
+fn delete_layout_file(dir: &Path, language: &str, name: &str) -> Result<(), String> {
+    let path = layout_path(dir, language, name)?;
 
     if !path.exists() {
         return Err(format!(
@@ -1129,9 +1144,7 @@ fn delete_layout(name: String, state: tauri::State<'_, AppState>) -> Result<(), 
             path.display()
         ));
     }
-    std::fs::remove_file(&path).map_err(|e| format!("Delete failed: {e}"))?;
-    state.layouts.lock().unwrap().remove(&name.to_lowercase());
-    Ok(())
+    std::fs::remove_file(&path).map_err(|e| format!("Delete failed: {e}"))
 }
 
 /// Saves a modified key arrangement (e.g. from drag-swaps in the Analyze view)
@@ -1173,13 +1186,7 @@ fn save_custom_layout(
         serde_json::to_string_pretty(&layout).map_err(|e| format!("Serialization failed: {e}"))?;
 
     let lang = engine.language.clone();
-    let file_name = new_name.replace(' ', "_").to_lowercase();
-    let path = state
-        .dirs
-        .layouts_dir()
-        .join(&lang)
-        .join(&file_name)
-        .with_extension("dof");
+    let path = layout_path(&state.dirs.layouts_dir(), &lang, &new_name)?;
 
     if path.exists() {
         return Err(format!("A layout named '{new_name}' already exists."));
@@ -1224,13 +1231,7 @@ fn save_layout_edit(
 
     // Find the original file path.
     let lang = state.engine.lock().unwrap().language.clone();
-    let file_name = original_name.replace(' ', "_").to_lowercase();
-    let path = state
-        .dirs
-        .layouts_dir()
-        .join(&lang)
-        .join(&file_name)
-        .with_extension("dof");
+    let path = layout_path(&state.dirs.layouts_dir(), &lang, &original_name)?;
 
     let json = serde_json::to_string_pretty(&dof_json).map_err(|e| e.to_string())?;
     std::fs::write(&path, &json).map_err(|e| format!("Write failed: {e}"))?;
@@ -1261,13 +1262,7 @@ fn fork_layout(
     let mut forked = original.clone();
     forked.name = new_name.clone();
 
-    let file_name = new_name.replace(' ', "_").to_lowercase();
-    let path = state
-        .dirs
-        .layouts_dir()
-        .join(&lang)
-        .join(&file_name)
-        .with_extension("dof");
+    let path = layout_path(&state.dirs.layouts_dir(), &lang, &new_name)?;
 
     if path.exists() {
         return Err(format!("A layout named '{new_name}' already exists."));
@@ -1556,10 +1551,13 @@ fn save_weight_preset(
     weights: WeightsDto,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let dir = preset_dir(&state.dirs);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(&name).with_extension("toml");
-    std::fs::write(&path, weights_dto_to_toml(&weights)).map_err(|e| e.to_string())
+    write_weight_preset(&preset_dir(&state.dirs), &name, &weights)
+}
+
+fn write_weight_preset(dir: &Path, name: &str, weights: &WeightsDto) -> Result<(), String> {
+    let path = preset_path(dir, name)?;
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    std::fs::write(&path, weights_dto_to_toml(weights)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1567,7 +1565,11 @@ fn load_weight_preset(
     name: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<WeightsDto, String> {
-    let path = preset_dir(&state.dirs).join(&name).with_extension("toml");
+    read_weight_preset(&preset_dir(&state.dirs), &name)
+}
+
+fn read_weight_preset(dir: &Path, name: &str) -> Result<WeightsDto, String> {
+    let path = preset_path(dir, name)?;
     let s = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     toml::from_str::<WeightsDto>(&s).map_err(|e| format!("Failed to parse preset '{name}': {e}"))
 }
@@ -1744,4 +1746,145 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod filename_boundary_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "oxeylyzer-paths-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn preset_save_rejects_traversal_without_overwriting_config() {
+        let root = TestDir::new();
+        let dirs = OxeylyzerDirs::with_override(root.0.clone());
+        let sentinel = dirs.config_file();
+        std::fs::write(&sentinel, b"original\0config").unwrap();
+        let weights = config_to_dto(&Config::with_defaults()).weights;
+
+        assert!(write_weight_preset(&dirs.weight_presets_dir(), "../config", &weights).is_err());
+        assert_eq!(std::fs::read(sentinel).unwrap(), b"original\0config");
+    }
+
+    #[test]
+    fn preset_load_rejects_traversal_to_valid_weights() {
+        let root = TestDir::new();
+        let dirs = OxeylyzerDirs::with_override(root.0.clone());
+        let presets = dirs.weight_presets_dir();
+        std::fs::create_dir_all(&presets).unwrap();
+        let weights = config_to_dto(&Config::with_defaults()).weights;
+        std::fs::write(dirs.config_file(), weights_dto_to_toml(&weights)).unwrap();
+
+        assert!(read_weight_preset(&presets, "../config").is_err());
+    }
+
+    #[test]
+    fn valid_preset_names_round_trip() {
+        let root = TestDir::new();
+        let presets = root.0.join("presets");
+        let mut weights = config_to_dto(&Config::with_defaults()).weights;
+        weights.sfbs = 123.0;
+
+        write_weight_preset(&presets, "My Weights", &weights).unwrap();
+        assert!(presets.join("My Weights.toml").is_file());
+        let loaded = read_weight_preset(&presets, "My Weights").unwrap();
+        assert_eq!(
+            serde_json::to_value(loaded).unwrap(),
+            serde_json::to_value(weights).unwrap()
+        );
+    }
+
+    #[test]
+    fn layout_delete_rejects_traversal_without_removing_neighbor() {
+        let root = TestDir::new();
+        let dirs = OxeylyzerDirs::with_override(root.0.clone());
+        let layouts = dirs.layouts_dir().join("english");
+        std::fs::create_dir_all(&layouts).unwrap();
+        let sentinel = dirs.layouts_dir().join("config.dof");
+        std::fs::write(&sentinel, b"original\0layout").unwrap();
+
+        assert!(delete_layout_file(&dirs.layouts_dir(), "english", "../config").is_err());
+        assert_eq!(std::fs::read(sentinel).unwrap(), b"original\0layout");
+    }
+
+    #[test]
+    fn layout_delete_rejects_corpus_language_paths() {
+        let root = TestDir::new();
+        let dirs = OxeylyzerDirs::with_override(root.0.clone());
+        std::fs::create_dir_all(dirs.layouts_dir()).unwrap();
+        let outside = root.0.join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        for (language, neighbor) in [
+            ("..".to_string(), root.0.join("static/config.dof")),
+            (
+                outside.to_str().unwrap().to_string(),
+                outside.join("config.dof"),
+            ),
+        ] {
+            std::fs::write(&neighbor, b"original\0layout").unwrap();
+            let engine = Oxeylyzer::new(
+                Data {
+                    name: language,
+                    ..Data::default()
+                },
+                Config::with_defaults(),
+            );
+
+            assert!(
+                delete_layout_file(&dirs.layouts_dir(), &engine.language, "config").is_err(),
+                "accepted corpus language {:?}",
+                engine.language
+            );
+            assert_eq!(std::fs::read(neighbor).unwrap(), b"original\0layout");
+        }
+    }
+
+    #[test]
+    fn layout_delete_uses_existing_name_normalization() {
+        let root = TestDir::new();
+        let layout = root.0.join("english/my_layout.dof");
+        generated_layout::write_new(&layout, "layout").unwrap();
+
+        delete_layout_file(&root.0, "english", "My Layout").unwrap();
+        assert!(!layout.exists());
+    }
+
+    #[test]
+    fn rejects_paths_and_accepts_names() {
+        for name in [
+            "",
+            ".",
+            "..",
+            "../config",
+            "/tmp/file",
+            "a/b",
+            "a\\b",
+            "C:config",
+        ] {
+            assert!(validate_filename(name).is_err(), "accepted {name:?}");
+        }
+        for name in ["My Layout", "layout_1", "é"] {
+            assert!(validate_filename(name).is_ok(), "rejected {name:?}");
+        }
+    }
 }
