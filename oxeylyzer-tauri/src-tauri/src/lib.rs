@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -160,9 +160,27 @@ pub struct ConfigDto {
     pub weights: WeightsDto,
 }
 
+#[derive(Serialize)]
+pub struct ConfigSnapshotDto {
+    pub config: ConfigDto,
+    /// Exact loaded bytes identify the form's base without a second revision counter.
+    pub revision: Vec<u8>,
+}
+
 // ─── App State ────────────────────────────────────────────────────────────────
 
 pub struct AppState {
+    /// Acquire before other state locks for transition preparation and publication.
+    pub transition: Mutex<()>,
+    /// Orders frontend results against engine changes, including delayed events.
+    pub engine_revision: AtomicU64,
+    pub engine_changed: Box<dyn Fn(u64) + Send + Sync>,
+    /// Effective corpus path for this session, independent of persisted config.
+    pub active_corpus: Mutex<PathBuf>,
+    /// Resolved data directory used to prepare the active engine and layouts.
+    pub active_data_root: Mutex<PathBuf>,
+    /// Last successfully loaded or saved bytes, used to reject known external edits.
+    pub config_contents: Mutex<Vec<u8>>,
     /// The active analyzer engine, wrapped in Arc so it can be cheaply cloned for
     /// background generation without holding the lock.
     pub engine: Mutex<Arc<Oxeylyzer>>,
@@ -266,25 +284,28 @@ fn get_board_str(layout: &Layout) -> String {
         .unwrap_or_default()
 }
 
-fn load_all_layouts(config: &Config, base_path: &Path) -> HashMap<String, Layout> {
-    config
-        .layouts
-        .iter()
-        .flat_map(|p| {
-            let full = base_path.join(p);
-            let pattern = full.to_string_lossy().into_owned();
-            glob::glob(&pattern)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .flat_map(|path| {
-                    Layout::load(&path).inspect_err(|e| {
-                        eprintln!("Error loading layout '{}': {e}", path.display())
-                    })
-                })
-                .map(|l| (l.name.to_lowercase(), l))
-        })
-        .collect()
+fn load_all_layouts(config: &Config, base_path: &Path) -> (HashMap<String, Layout>, Vec<String>) {
+    let mut layouts = HashMap::new();
+    let mut errors = Vec::new();
+    for pattern in &config.layouts {
+        let full = base_path.join(pattern);
+        for path in glob::glob(&full.to_string_lossy())
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            match Layout::load(&path) {
+                Ok(layout) => {
+                    layouts.insert(layout.name.to_lowercase(), layout);
+                }
+                Err(error) => errors.push(format!(
+                    "Error loading layout '{}': {error}",
+                    path.display()
+                )),
+            }
+        }
+    }
+    (layouts, errors)
 }
 
 /// Builds a [`FastLayout`] from a base layout with an optional custom key
@@ -364,16 +385,32 @@ fn corpus_path_for(language_data_dir: &Path, language: &str) -> PathBuf {
     language_data_dir.join(language).with_extension("json")
 }
 
+fn layout_snapshot(state: &AppState, name: &str) -> Result<(Arc<Oxeylyzer>, Layout), String> {
+    let _transition = state.transition.lock().unwrap();
+    let engine = state.engine.lock().unwrap().clone();
+    let layout = state
+        .layouts
+        .lock()
+        .unwrap()
+        .get(&name.to_lowercase())
+        .cloned()
+        .ok_or_else(|| format!("Layout '{name}' not found"))?;
+    Ok((engine, layout))
+}
+
 // ─── Tauri Commands ───────────────────────────────────────────────────────────
+
+fn store_state_snapshot(state: &AppState) -> (Arc<Oxeylyzer>, Vec<Layout>) {
+    let _transition = state.transition.lock().unwrap();
+    let engine = state.engine.lock().unwrap().clone();
+    let layouts = state.layouts.lock().unwrap().values().cloned().collect();
+    (engine, layouts)
+}
 
 #[tauri::command]
 fn list_layouts(state: tauri::State<'_, AppState>) -> Result<Vec<LayoutDto>, String> {
-    let engine = state.engine.lock().unwrap().clone();
-    let layouts = state.layouts.lock().unwrap();
-    let mut dtos: Vec<LayoutDto> = layouts
-        .values()
-        .map(|l| layout_to_dto(&engine, l))
-        .collect();
+    let (engine, layouts) = store_state_snapshot(&state);
+    let mut dtos: Vec<LayoutDto> = layouts.iter().map(|l| layout_to_dto(&engine, l)).collect();
     dtos.sort_by(|a, b| b.stats.score.total_cmp(&a.stats.score));
     Ok(dtos)
 }
@@ -390,12 +427,8 @@ fn current_language(state: tauri::State<'_, AppState>) -> Result<String, String>
 
 #[tauri::command]
 fn analyze_layout(name: String, state: tauri::State<'_, AppState>) -> Result<LayoutDto, String> {
-    let engine = state.engine.lock().unwrap().clone();
-    let layouts = state.layouts.lock().unwrap();
-    let layout = layouts
-        .get(&name.to_lowercase())
-        .ok_or_else(|| format!("Layout '{name}' not found"))?;
-    Ok(layout_to_dto(&engine, layout))
+    let (engine, layout) = layout_snapshot(&state, &name)?;
+    Ok(layout_to_dto(&engine, &layout))
 }
 
 #[tauri::command]
@@ -407,14 +440,10 @@ fn get_bigrams(
     disabled_indices: Option<Vec<usize>>,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<BigramEntryDto>, String> {
-    let engine = state.engine.lock().unwrap().clone();
-    let layouts = state.layouts.lock().unwrap();
-    let layout = layouts
-        .get(&name.to_lowercase())
-        .ok_or_else(|| format!("Layout '{name}' not found"))?;
+    let (engine, layout) = layout_snapshot(&state, &name)?;
     let fl = custom_fast_layout(
         &engine,
-        layout,
+        &layout,
         keys.as_deref(),
         &disabled_indices.unwrap_or_default(),
     )?;
@@ -530,14 +559,10 @@ fn get_trigrams(
 ) -> Result<Vec<TrigramEntryDto>, String> {
     use oxeylyzer_core::trigram_patterns::TrigramPattern;
 
-    let engine = state.engine.lock().unwrap().clone();
-    let layouts = state.layouts.lock().unwrap();
-    let layout = layouts
-        .get(&name.to_lowercase())
-        .ok_or_else(|| format!("Layout '{name}' not found"))?;
+    let (engine, layout) = layout_snapshot(&state, &name)?;
     let fl = custom_fast_layout(
         &engine,
-        layout,
+        &layout,
         keys.as_deref(),
         &disabled_indices.unwrap_or_default(),
     )?;
@@ -581,12 +606,8 @@ fn swap_keys(
     swaps: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<LayoutDto, String> {
-    let engine = state.engine.lock().unwrap().clone();
-    let layouts = state.layouts.lock().unwrap();
-    let layout = layouts
-        .get(&name.to_lowercase())
-        .ok_or_else(|| format!("Layout '{name}' not found"))?;
-    let mut fl = engine.fast_layout(layout, &[]);
+    let (engine, layout) = layout_snapshot(&state, &name)?;
+    let mut fl = engine.fast_layout(&layout, &[]);
 
     // Parse swap string: space-separated tokens, each token is 2+ chars.
     // "ab" = swap a and b; "abc" = cycle a→b→c.
@@ -614,7 +635,7 @@ fn swap_keys(
     Ok(LayoutDto {
         name: format!("{name}*"),
         keys: fl.layout_str(),
-        board: get_board_str(layout),
+        board: get_board_str(&layout),
         fingering_name: layout
             .metadata
             .fingering_name
@@ -640,12 +661,8 @@ fn analyze_custom(
     disabled_indices: Vec<usize>,
     state: tauri::State<'_, AppState>,
 ) -> Result<LayoutDto, String> {
-    let engine = state.engine.lock().unwrap().clone();
-    let layouts = state.layouts.lock().unwrap();
-    let layout = layouts
-        .get(&name.to_lowercase())
-        .ok_or_else(|| format!("Layout '{name}' not found"))?;
-    let fl = custom_fast_layout(&engine, layout, Some(&keys), &disabled_indices)?;
+    let (engine, layout) = layout_snapshot(&state, &name)?;
+    let fl = custom_fast_layout(&engine, &layout, Some(&keys), &disabled_indices)?;
 
     let keyboard = fl
         .keyboard
@@ -663,7 +680,7 @@ fn analyze_custom(
     Ok(LayoutDto {
         name: format!("{name}*"),
         keys,
-        board: get_board_str(layout),
+        board: get_board_str(&layout),
         fingering_name: layout
             .metadata
             .fingering_name
@@ -681,13 +698,9 @@ fn analyze_with_disabled(
     disabled_indices: Vec<usize>,
     state: tauri::State<'_, AppState>,
 ) -> Result<LayoutDto, String> {
-    let engine = state.engine.lock().unwrap().clone();
-    let layouts = state.layouts.lock().unwrap();
-    let layout = layouts
-        .get(&name.to_lowercase())
-        .ok_or_else(|| format!("Layout '{name}' not found"))?;
-    let original_keys = engine.fast_layout(layout, &[]).layout_str();
-    let fl = custom_fast_layout(&engine, layout, None, &disabled_indices)?;
+    let (engine, layout) = layout_snapshot(&state, &name)?;
+    let original_keys = engine.fast_layout(&layout, &[]).layout_str();
+    let fl = custom_fast_layout(&engine, &layout, None, &disabled_indices)?;
     let keyboard = fl
         .keyboard
         .iter()
@@ -704,7 +717,7 @@ fn analyze_with_disabled(
     Ok(LayoutDto {
         name: format!("{name}*"),
         keys: original_keys,
-        board: get_board_str(layout),
+        board: get_board_str(&layout),
         fingering_name: layout
             .metadata
             .fingering_name
@@ -719,9 +732,13 @@ fn analyze_with_disabled(
 #[tauri::command]
 fn get_char_frequencies(state: tauri::State<'_, AppState>) -> Result<Vec<CharFreqDto>, String> {
     let engine = state.engine.lock().unwrap().clone();
+    Ok(char_frequencies(&engine))
+}
+
+fn char_frequencies(engine: &Oxeylyzer) -> Vec<CharFreqDto> {
     let total = engine.data.char_total as f64;
     if total == 0.0 {
-        return Ok(vec![]);
+        return vec![];
     }
     let freqs: Vec<CharFreqDto> = (0..engine.data.len())
         .filter_map(|i| {
@@ -740,21 +757,48 @@ fn get_char_frequencies(state: tauri::State<'_, AppState>) -> Result<Vec<CharFre
             })
         })
         .collect();
-    Ok(freqs)
+    freqs
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StoreSnapshotDto {
+    layouts: Vec<LayoutDto>,
+    languages: Vec<String>,
+    current_language: String,
+    char_frequencies: HashMap<String, f64>,
+}
+
+#[tauri::command]
+fn get_store_snapshot(state: tauri::State<'_, AppState>) -> StoreSnapshotDto {
+    let (engine, layouts) = store_state_snapshot(&state);
+    let mut layouts: Vec<_> = layouts
+        .iter()
+        .map(|layout| layout_to_dto(&engine, layout))
+        .collect();
+    layouts.sort_by(|a, b| b.stats.score.total_cmp(&a.stats.score));
+    StoreSnapshotDto {
+        layouts,
+        languages: list_languages_from_dir(&state.dirs.language_data_dir()),
+        current_language: engine.language.clone(),
+        char_frequencies: char_frequencies(&engine)
+            .into_iter()
+            .map(|entry| (entry.char, entry.percent))
+            .collect(),
+    }
 }
 
 #[tauri::command]
 fn set_language(language: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let config = state.config.lock().unwrap().clone();
-    let corpus_path = corpus_path_for(&state.dirs.language_data_dir(), &language);
-    let data = Data::load(&corpus_path)
-        .map_err(|e| format!("Failed to load corpus for '{language}': {e}"))?;
-    let new_engine = Arc::new(Oxeylyzer::new(data, config.clone()));
-    let new_layouts = load_all_layouts(&config, state.dirs.data_dir());
+    set_language_state(&state, &language)
+}
 
-    *state.engine.lock().unwrap() = new_engine;
-    *state.layouts.lock().unwrap() = new_layouts;
-    state.generated.lock().unwrap().clear();
+fn set_language_state(state: &AppState, language: &str) -> Result<(), String> {
+    let _transition = state.transition.lock().unwrap();
+    let config = state.config.lock().unwrap().clone();
+    let corpus = corpus_path_for(&state.dirs.language_data_dir(), language);
+    let (engine, layouts, data_root) = prepare_state(state, &config, &corpus)?;
+    publish_prepared(state, config, corpus, engine, layouts, data_root);
     Ok(())
 }
 
@@ -937,6 +981,7 @@ async fn start_generate(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    let _transition = state.transition.lock().unwrap();
     // Reject overlapping runs — two concurrent runs would race for
     // `state.generated` and double CPU usage.
     if state
@@ -950,6 +995,7 @@ async fn start_generate(
 
     // Clone what we need before spawning — avoids moving tauri::State into a thread.
     let engine = state.engine.lock().unwrap().clone();
+    let revision = state.engine_revision.load(Ordering::Relaxed);
     let cancel = state.cancel_flag.clone();
     let generating = state.generating.clone();
     let algorithm = algorithm.unwrap_or_else(|| "hill".to_string());
@@ -993,6 +1039,13 @@ async fn start_generate(
         }
 
         let cancelled = cancel.load(Ordering::Relaxed);
+        {
+            let state = app.state::<AppState>();
+            let _transition = state.transition.lock().unwrap();
+            if !Arc::ptr_eq(&engine, &state.engine.lock().unwrap()) {
+                results.clear();
+            }
+        }
 
         // Pre-compute scores once per layout, then sort by cached value.
         // Avoids calling engine.score() O(N log N) times inside the comparator.
@@ -1031,17 +1084,48 @@ async fn start_generate(
         // Store all results (sorted) for save_generated. Partial results from a
         // cancelled run are kept on purpose — they're still valid layouts.
         let state = app.state::<AppState>();
-        *state.generated.lock().unwrap() = scored.into_iter().map(|(_, fl)| fl).collect();
-
-        let _ = app.emit(
-            "generate-done",
-            serde_json::json!({ "results": layout_dtos, "cancelled": cancelled }),
+        finish_generation(
+            &state,
+            &engine,
+            revision,
+            scored.into_iter().map(|(_, fl)| fl).collect(),
+            layout_dtos,
+            cancelled,
+            |payload| {
+                let _ = app.emit("generate-done", payload);
+            },
         );
-
-        generating.store(false, Ordering::SeqCst);
     });
 
     Ok(())
+}
+
+fn finish_generation(
+    state: &AppState,
+    engine: &Arc<Oxeylyzer>,
+    revision: u64,
+    results: Vec<FastLayout>,
+    layout_dtos: Vec<LayoutDto>,
+    cancelled: bool,
+    publish: impl FnOnce(serde_json::Value),
+) {
+    // Keep validity, saveable results, and event publication in one engine transition.
+    let _transition = state.transition.lock().unwrap();
+    let stale = !Arc::ptr_eq(engine, &state.engine.lock().unwrap());
+    let payload = if stale {
+        state.generated.lock().unwrap().clear();
+        serde_json::json!({
+            "results": [],
+            "revision": revision,
+            "cancelled": true,
+            "reason": "Generation stopped because the language or configuration changed. Please generate again.",
+        })
+    } else {
+        *state.generated.lock().unwrap() = results;
+        serde_json::json!({ "results": layout_dtos, "cancelled": cancelled, "reason": null, "revision": revision })
+    };
+    state.generating.store(false, Ordering::SeqCst);
+    publish(payload);
 }
 
 #[tauri::command]
@@ -1050,6 +1134,7 @@ fn save_generated(
     name: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<LayoutDto, String> {
+    let _transition = state.transition.lock().unwrap();
     let engine = state.engine.lock().unwrap().clone();
     let mut generated = state.generated.lock().unwrap();
 
@@ -1104,6 +1189,7 @@ fn save_generated(
 
 #[tauri::command]
 fn cancel_generate(state: tauri::State<'_, AppState>) {
+    let _transition = state.transition.lock().unwrap();
     state.cancel_flag.store(true, Ordering::Relaxed);
 }
 
@@ -1129,6 +1215,7 @@ fn preset_path(dir: &std::path::Path, name: &str) -> Result<std::path::PathBuf, 
 
 #[tauri::command]
 fn delete_layout(name: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let _transition = state.transition.lock().unwrap();
     let lang = state.engine.lock().unwrap().language.clone();
     delete_layout_file(&state.dirs.layouts_dir(), &lang, &name)?;
     state.layouts.lock().unwrap().remove(&name.to_lowercase());
@@ -1156,6 +1243,7 @@ fn save_custom_layout(
     new_name: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<LayoutDto, String> {
+    let _transition = state.transition.lock().unwrap();
     let new_name = new_name.trim().to_string();
     if new_name.is_empty() {
         return Err("A name is required.".to_string());
@@ -1225,6 +1313,7 @@ fn save_layout_edit(
     original_name: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    let _transition = state.transition.lock().unwrap();
     let layout: Layout = serde_json::from_value(dof_json.clone())
         .map_err(|e| format!("Invalid layout JSON: {e}"))?;
     let new_name = layout.name.clone();
@@ -1250,6 +1339,7 @@ fn fork_layout(
     new_name: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<LayoutDto, String> {
+    let _transition = state.transition.lock().unwrap();
     let engine = state.engine.lock().unwrap().clone();
     let lang = engine.language.clone();
 
@@ -1303,6 +1393,7 @@ fn set_session(session: SessionDto, state: tauri::State<'_, AppState>) -> Result
 
 // ─── Config Commands ──────────────────────────────────────────────────────────
 
+#[cfg(test)]
 fn config_dto_to_toml(dto: &ConfigDto) -> String {
     let layouts_lines = dto
         .layouts
@@ -1433,13 +1524,36 @@ fn dto_to_weights(w: &WeightsDto) -> Weights {
 }
 
 #[tauri::command]
-fn get_config(state: tauri::State<'_, AppState>) -> Result<ConfigDto, String> {
-    let config = state.config.lock().unwrap();
-    Ok(config_to_dto(&config))
+fn get_config(state: tauri::State<'_, AppState>) -> Result<ConfigSnapshotDto, String> {
+    Ok(get_config_state(&state))
+}
+
+fn get_config_state(state: &AppState) -> ConfigSnapshotDto {
+    let _transition = state.transition.lock().unwrap();
+    ConfigSnapshotDto {
+        config: config_to_dto(&state.config.lock().unwrap()),
+        revision: state.config_contents.lock().unwrap().clone(),
+    }
 }
 
 #[tauri::command]
-fn set_config(config_dto: ConfigDto, state: tauri::State<'_, AppState>) -> Result<(), String> {
+fn set_config(
+    config_dto: ConfigDto,
+    revision: Vec<u8>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<u8>, String> {
+    save_config_state(&state, config_dto, &revision)
+}
+
+fn save_config_state(
+    state: &AppState,
+    config_dto: ConfigDto,
+    revision: &[u8],
+) -> Result<Vec<u8>, String> {
+    let _transition = state.transition.lock().unwrap();
+    if revision != *state.config_contents.lock().unwrap() {
+        return Err("Config changed since it was loaded; reopen Config before saving.".into());
+    }
     let new_weights = dto_to_weights(&config_dto.weights);
     let new_config = Config {
         corpus: PathBuf::from(&config_dto.corpus),
@@ -1450,23 +1564,24 @@ fn set_config(config_dto: ConfigDto, state: tauri::State<'_, AppState>) -> Resul
         weights: new_weights,
     };
 
-    // Write config.toml as hand-built TOML string.
-    let config_path = state.dirs.config_file();
-    std::fs::write(&config_path, config_dto_to_toml(&config_dto))
-        .map_err(|e| format!("Write failed: {e}"))?;
-
-    // Rebuild engine with new config
-    let corpus_path = state.dirs.data_dir().join(&new_config.corpus);
-    let data = Data::load(&corpus_path).map_err(|e| format!("Failed to load corpus: {e}"))?;
-    let new_engine = Arc::new(Oxeylyzer::new(data, new_config.clone()));
-    let new_layouts = load_all_layouts(&new_config, state.dirs.data_dir());
-
-    *state.config.lock().unwrap() = new_config;
-    *state.engine.lock().unwrap() = new_engine;
-    *state.layouts.lock().unwrap() = new_layouts;
-    // Generated layouts are tied to the old engine's character mapping.
-    state.generated.lock().unwrap().clear();
-    Ok(())
+    let corpus = if new_config.corpus == state.config.lock().unwrap().corpus {
+        state.active_corpus.lock().unwrap().clone()
+    } else {
+        state.dirs.data_dir().join(&new_config.corpus)
+    };
+    let contents =
+        toml::to_string(&new_config).map_err(|e| format!("Serialize config failed: {e}"))?;
+    toml::from_str::<Config>(&contents).map_err(|e| format!("Invalid serialized config: {e}"))?;
+    let contents = contents.into_bytes();
+    let (engine, layouts, data_root) = prepare_state(state, &new_config, &corpus)?;
+    replace_config(
+        &state.dirs.config_file(),
+        &state.config_contents.lock().unwrap(),
+        &contents,
+    )?;
+    *state.config_contents.lock().unwrap() = contents.clone();
+    publish_prepared(state, new_config, corpus, engine, layouts, data_root);
+    Ok(contents)
 }
 
 #[tauri::command]
@@ -1576,17 +1691,368 @@ fn read_weight_preset(dir: &Path, name: &str) -> Result<WeightsDto, String> {
 
 // ─── Reload Helper ────────────────────────────────────────────────────────────
 
-fn reload_state(state: &AppState) -> Result<(), String> {
-    let config = Config::with_loaded_weights(state.dirs.config_file())
-        .map_err(|e| format!("Failed to reload config: {e}"))?;
-    let corpus_path = state.dirs.data_dir().join(&config.corpus);
-    let data = Data::load(&corpus_path).map_err(|e| format!("Failed to load corpus: {e}"))?;
-    let new_engine = Arc::new(Oxeylyzer::new(data, config.clone()));
-    let new_layouts = load_all_layouts(&config, state.dirs.data_dir());
+type PreparedState = (Arc<Oxeylyzer>, HashMap<String, Layout>, PathBuf);
+
+fn prepare_state(
+    state: &AppState,
+    config: &Config,
+    corpus: &Path,
+) -> Result<PreparedState, String> {
+    let data_root = state
+        .dirs
+        .data_dir()
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let data = Data::load(corpus).map_err(|e| format!("Failed to load corpus: {e}"))?;
+    let (layouts, errors) = load_all_layouts(config, state.dirs.data_dir());
+    if !errors.is_empty() {
+        return Err(errors.join("\n"));
+    }
+    if state
+        .dirs
+        .data_dir()
+        .canonicalize()
+        .map_err(|e| e.to_string())?
+        != data_root
+    {
+        return Err("Data directory changed during reload; retry loading it.".into());
+    }
+    Ok((
+        Arc::new(Oxeylyzer::new(data, config.clone())),
+        layouts,
+        data_root,
+    ))
+}
+
+/// Caller holds transition through preparation, persistence, and publication.
+fn publish_prepared(
+    state: &AppState,
+    config: Config,
+    corpus: PathBuf,
+    engine: Arc<Oxeylyzer>,
+    layouts: HashMap<String, Layout>,
+    data_root: PathBuf,
+) {
+    state.cancel_flag.store(true, Ordering::Relaxed);
     *state.config.lock().unwrap() = config;
-    *state.engine.lock().unwrap() = new_engine;
-    *state.layouts.lock().unwrap() = new_layouts;
+    *state.active_corpus.lock().unwrap() = corpus;
+    *state.active_data_root.lock().unwrap() = data_root;
+    *state.engine.lock().unwrap() = engine;
+    *state.layouts.lock().unwrap() = layouts;
     state.generated.lock().unwrap().clear();
+    let revision = state.engine_revision.fetch_add(1, Ordering::Relaxed) + 1;
+    (state.engine_changed)(revision);
+}
+
+fn replace_config(path: &Path, expected: &[u8], contents: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::sync::atomic::AtomicUsize;
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let path = std::fs::canonicalize(path).map_err(|e| format!("Read config failed: {e}"))?;
+    let path = path.as_path();
+    let metadata = std::fs::metadata(path).map_err(|e| format!("Read config failed: {e}"))?;
+    if !metadata.is_file() {
+        return Err("Config must be a regular file.".into());
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("Write failed: {e}"))?;
+    let (temp, mut file) = loop {
+        let temp = path.with_file_name(format!(
+            ".config-{}-{}.tmp",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
+            Ok(file) => break (temp, file),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("Write failed: {e}")),
+        }
+    };
+    let result = (|| {
+        file.set_permissions(metadata.permissions())
+            .map_err(|e| format!("Set config permissions failed: {e}"))?;
+        file.write_all(contents)
+            .map_err(|e| format!("Write failed: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("Sync config failed: {e}"))?;
+        let current = std::fs::read(path).map_err(|e| format!("Read config failed: {e}"))?;
+        if current != expected {
+            return Err("Config changed externally; reload it before saving.".into());
+        }
+        // shortcut: external editors can race this final check, use a shared writer protocol if strict CAS is required.
+        std::fs::rename(&temp, path).map_err(|e| format!("Replace config failed: {e}"))
+    })();
+    drop(file);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+fn reload_state(state: &AppState) -> Result<(), String> {
+    let _transition = state.transition.lock().unwrap();
+    let contents = std::fs::read(state.dirs.config_file())
+        .map_err(|e| format!("Failed to reload config: {e}"))?;
+    let data_root = state
+        .dirs
+        .data_dir()
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if contents == *state.config_contents.lock().unwrap()
+        && data_root == *state.active_data_root.lock().unwrap()
+    {
+        return Ok(());
+    }
+    let text =
+        std::str::from_utf8(&contents).map_err(|e| format!("Failed to reload config: {e}"))?;
+    let config: Config =
+        toml::from_str(text).map_err(|e| format!("Failed to reload config: {e}"))?;
+    let corpus = if config.corpus == state.config.lock().unwrap().corpus {
+        state.active_corpus.lock().unwrap().clone()
+    } else {
+        state.dirs.data_dir().join(&config.corpus)
+    };
+    let (engine, layouts, data_root) = prepare_state(state, &config, &corpus)?;
+    if std::fs::read(state.dirs.config_file())
+        .map_err(|e| format!("Failed to reload config: {e}"))?
+        != contents
+    {
+        return Err("Config changed externally during reload; retry loading it.".into());
+    }
+    *state.config_contents.lock().unwrap() = contents;
+    publish_prepared(state, config, corpus, engine, layouts, data_root);
+    Ok(())
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct WatchChanges {
+    config: bool,
+    layouts: bool,
+}
+
+fn config_watch_path(config: &Path) -> std::io::Result<PathBuf> {
+    std::path::absolute(config)
+}
+
+// Include each link in the resolution chain, including a temporarily missing one.
+fn config_link_paths(config: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    let mut remaining = config.to_path_buf();
+    for _ in 0..40 {
+        let mut resolved = PathBuf::new();
+        let mut components = remaining.components();
+        let mut followed = false;
+        while let Some(component) = components.next() {
+            match component {
+                std::path::Component::ParentDir => {
+                    resolved.pop();
+                }
+                std::path::Component::CurDir => continue,
+                _ => resolved.push(component.as_os_str()),
+            }
+            match std::fs::symlink_metadata(&resolved) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    paths.push(resolved.clone());
+                    let Ok(link) = std::fs::read_link(&resolved) else {
+                        return paths;
+                    };
+                    let mut next = resolved.parent().unwrap().join(link);
+                    next.extend(components.map(|part| part.as_os_str()));
+                    remaining = next;
+                    followed = true;
+                    break;
+                }
+                Err(_) => {
+                    paths.push(resolved);
+                    return paths;
+                }
+                _ => {}
+            }
+        }
+        if !followed {
+            break;
+        }
+    }
+    paths
+}
+
+fn update_link_watches<W: notify::Watcher>(
+    watcher: &mut W,
+    config: &Path,
+    target: &Path,
+    layouts: &Path,
+    previous: &mut Vec<PathBuf>,
+) -> notify::Result<()> {
+    let links = config_link_paths(config);
+    let parents: std::collections::HashSet<_> = links.iter().filter_map(|p| p.parent()).collect();
+    let reserved =
+        |p: &Path| p == config.parent().unwrap() || p == target.parent().unwrap() || p == layouts;
+    for parent in &parents {
+        if !reserved(parent) {
+            watcher.watch(parent, notify::RecursiveMode::NonRecursive)?;
+        }
+    }
+    for parent in previous.iter().filter_map(|p| p.parent()) {
+        if !reserved(parent) && !parents.contains(parent) {
+            let _ = watcher.unwatch(parent);
+        }
+    }
+    *previous = links;
+    Ok(())
+}
+
+fn watch_paths(
+    tx: std::sync::mpsc::Sender<notify::Result<notify::Event>>,
+    config: &Path,
+    target: &Path,
+    layouts: &Path,
+) -> notify::Result<notify::RecommendedWatcher> {
+    use notify::{RecursiveMode, Watcher};
+    let mut watcher = notify::recommended_watcher(tx)?;
+    // Watch the directory so atomic replacement does not detach config monitoring.
+    watcher.watch(config.parent().unwrap(), RecursiveMode::NonRecursive)?;
+    if target.parent() != config.parent() {
+        watcher.watch(target.parent().unwrap(), RecursiveMode::NonRecursive)?;
+    }
+    if let Err(error) = watcher.watch(layouts, RecursiveMode::Recursive) {
+        eprintln!("Layout watcher init failed: {error}");
+    }
+    Ok(watcher)
+}
+
+fn update_config_watch<W: notify::Watcher>(
+    watcher: &mut W,
+    config: &Path,
+    target: &mut PathBuf,
+    layouts: &Path,
+) -> notify::Result<()> {
+    let new_target = match config.canonicalize() {
+        Ok(path) => path,
+        Err(_) => return Ok(()),
+    };
+    if new_target == *target {
+        return Ok(());
+    }
+    let old_parent = target.parent().unwrap();
+    let new_parent = new_target.parent().unwrap();
+    let link_parent = config.parent().unwrap();
+    if new_parent != link_parent && new_parent != old_parent && new_parent != layouts {
+        watcher.watch(new_parent, notify::RecursiveMode::NonRecursive)?;
+    }
+    if old_parent != new_parent && old_parent != link_parent && old_parent != layouts {
+        let _ = watcher.unwatch(old_parent);
+    }
+    *target = new_target;
+    Ok(())
+}
+
+fn update_layout_watch<W: notify::Watcher>(
+    watcher: &mut W,
+    source: &Path,
+    layouts: &mut PathBuf,
+    config: &Path,
+    target: &Path,
+    links: &[PathBuf],
+) -> notify::Result<()> {
+    let new_layouts = source.canonicalize().map_err(notify::Error::io)?;
+    if new_layouts == *layouts {
+        return Ok(());
+    }
+    watcher.watch(&new_layouts, notify::RecursiveMode::Recursive)?;
+    if config.parent() == Some(layouts.as_path())
+        || target.parent() == Some(layouts.as_path())
+        || links
+            .iter()
+            .any(|link| link.parent() == Some(layouts.as_path()))
+    {
+        watcher.watch(layouts, notify::RecursiveMode::NonRecursive)?;
+    } else {
+        let _ = watcher.unwatch(layouts);
+    }
+    *layouts = new_layouts;
+    Ok(())
+}
+
+fn next_watch_changes(
+    rx: &std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
+    config: &Path,
+    target: &Path,
+    layouts: &Path,
+    known_links: &[PathBuf],
+    quiet: std::time::Duration,
+) -> Option<WatchChanges> {
+    use std::sync::mpsc::RecvTimeoutError;
+    let mut changes = WatchChanges::default();
+    let mut deadline: Option<std::time::Instant> = None;
+    loop {
+        let event = if let Some(until) = deadline {
+            let Some(remaining) = until.checked_duration_since(std::time::Instant::now()) else {
+                return Some(changes);
+            };
+            match rx.recv_timeout(remaining) {
+                Ok(event) => event,
+                Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
+                    return Some(changes);
+                }
+            }
+        } else {
+            rx.recv().ok()?
+        };
+        let event = match event {
+            Ok(event) => event,
+            Err(error) => {
+                eprintln!("File watcher error: {error}");
+                continue;
+            }
+        };
+        if event.need_rescan() {
+            changes.config = true;
+            changes.layouts = true;
+        } else {
+            if !matches!(
+                event.kind,
+                notify::EventKind::Modify(_)
+                    | notify::EventKind::Create(_)
+                    | notify::EventKind::Remove(_)
+            ) {
+                continue;
+            }
+            let links = config_link_paths(config);
+            let config_changed = event.paths.iter().any(|path| {
+                path == config
+                    || path == target
+                    || links.contains(path)
+                    || known_links.contains(path)
+            });
+            let layouts_changed = event.paths.iter().any(|path| path.starts_with(layouts));
+            if !config_changed && !layouts_changed {
+                continue;
+            }
+            changes.config |= config_changed;
+            changes.layouts |= layouts_changed;
+        }
+        deadline = Some(std::time::Instant::now() + quiet);
+    }
+}
+
+fn reload_layouts(state: &AppState) -> Result<(), String> {
+    // A repaired layout may unblock a config edit that failed preparation.
+    if let Err(error) = reload_state(state) {
+        eprintln!("Auto-reload failed: {error}");
+    }
+    let _transition = state.transition.lock().unwrap();
+    let config = state.config.lock().unwrap().clone();
+    let (layouts, errors) = load_all_layouts(&config, &state.active_data_root.lock().unwrap());
+    if !errors.is_empty() {
+        return Err(errors.join("\n"));
+    }
+    *state.layouts.lock().unwrap() = layouts;
     Ok(())
 }
 
@@ -1639,19 +2105,43 @@ pub fn run() {
             dirs.ensure_config()
                 .expect("failed to write default config");
 
-            let config = Config::with_loaded_weights(dirs.config_file())
-                .expect("failed to load config.toml");
+            let config_contents =
+                std::fs::read(dirs.config_file()).expect("failed to read config.toml");
+            let config: Config = toml::from_str(
+                std::str::from_utf8(&config_contents).expect("config.toml must be UTF-8"),
+            )
+            .expect("failed to load config.toml");
 
             let corpus_path = dirs.data_dir().join(&config.corpus);
             let data = Data::load(&corpus_path).expect("failed to load corpus");
 
             let engine = Arc::new(Oxeylyzer::new(data, config.clone()));
-            let layouts = load_all_layouts(&config, dirs.data_dir());
+            let (layouts, errors) = load_all_layouts(&config, dirs.data_dir());
+            for error in errors {
+                eprintln!("{error}");
+            }
 
-            let watch_config = dirs.config_file();
-            let watch_layouts = dirs.layouts_dir();
+            // Notify emits absolute paths; resolve overrides such as OXEYLYZER_DATA_DIR=.
+            let config_path = dirs.config_file();
+            let watch_config = config_watch_path(&config_path)?;
+            let watch_target = config_path.canonicalize()?;
+            let layouts_path = std::path::absolute(dirs.layouts_dir())?;
+            let watch_layouts = layouts_path
+                .canonicalize()
+                .unwrap_or_else(|_| layouts_path.clone());
 
             app.manage(AppState {
+                transition: Mutex::new(()),
+                engine_revision: AtomicU64::new(0),
+                engine_changed: Box::new({
+                    let app = app.handle().clone();
+                    move |revision| {
+                        let _ = app.emit("engine-changed", revision);
+                    }
+                }),
+                active_corpus: Mutex::new(corpus_path),
+                active_data_root: Mutex::new(dirs.data_dir().canonicalize()?),
+                config_contents: Mutex::new(config_contents),
                 engine: Mutex::new(engine),
                 layouts: Mutex::new(layouts),
                 generated: Mutex::new(Vec::new()),
@@ -1663,48 +2153,78 @@ pub fn run() {
 
             // File watcher: auto-reload when config.toml or layout files change.
             {
-                use notify::{EventKind, RecursiveMode, Watcher, recommended_watcher};
                 let app_handle = app.handle().clone();
                 std::thread::spawn(move || {
-                    let (tx, rx) = std::sync::mpsc::channel::<notify::Result<notify::Event>>();
-                    let mut watcher = match recommended_watcher(tx) {
-                        Ok(w) => w,
-                        Err(e) => {
-                            eprintln!("File watcher init failed: {e}");
-                            return;
-                        }
-                    };
-                    let _ = watcher.watch(&watch_config, RecursiveMode::NonRecursive);
-                    let _ = watcher.watch(&watch_layouts, RecursiveMode::Recursive);
-                    let mut last_reload = std::time::Instant::now()
-                        .checked_sub(std::time::Duration::from_secs(5))
-                        .unwrap_or_else(std::time::Instant::now);
-                    for event in rx.into_iter().flatten() {
-                        if !matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
-                            continue;
-                        }
-                        if last_reload.elapsed() < std::time::Duration::from_secs(2) {
-                            continue;
-                        }
-                        last_reload = std::time::Instant::now();
-                        let state = app_handle.state::<AppState>();
-
-                        // Only a config.toml change requires rebuilding the engine
-                        // (which invalidates generated results). Layout file changes
-                        // — including the app's own saves — just refresh the layout
-                        // map so in-progress work (e.g. generation results) survives.
-                        let config_changed = event.paths.iter().any(|p| p.ends_with("config.toml"));
-                        if config_changed {
-                            if let Err(e) = reload_state(&state) {
-                                eprintln!("Auto-reload failed: {e}");
-                            } else {
-                                let _ = app_handle.emit("config-reloaded", ());
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let mut watch_target = watch_target;
+                    let mut watch_layouts = watch_layouts;
+                    let mut watcher =
+                        match watch_paths(tx, &watch_config, &watch_target, &watch_layouts) {
+                            Ok(watcher) => watcher,
+                            Err(error) => {
+                                eprintln!("File watcher init failed: {error}");
+                                return;
                             }
-                        } else {
-                            let config = state.config.lock().unwrap().clone();
-                            *state.layouts.lock().unwrap() =
-                                load_all_layouts(&config, state.dirs.data_dir());
-                            let _ = app_handle.emit("layouts-reloaded", ());
+                        };
+                    let mut link_paths = Vec::new();
+                    if let Err(error) = update_link_watches(
+                        &mut watcher,
+                        &watch_config,
+                        &watch_target,
+                        &watch_layouts,
+                        &mut link_paths,
+                    ) {
+                        eprintln!("Config link watcher could not be registered: {error}");
+                    }
+                    while let Some(changes) = next_watch_changes(
+                        &rx,
+                        &watch_config,
+                        &watch_target,
+                        &watch_layouts,
+                        &link_paths,
+                        std::time::Duration::from_millis(250),
+                    ) {
+                        let state = app_handle.state::<AppState>();
+                        if changes.config {
+                            if let Err(error) = update_config_watch(
+                                &mut watcher,
+                                &watch_config,
+                                &mut watch_target,
+                                &watch_layouts,
+                            ) {
+                                eprintln!("Config target watcher could not be registered: {error}");
+                            }
+                            if let Err(error) = update_link_watches(
+                                &mut watcher,
+                                &watch_config,
+                                &watch_target,
+                                &watch_layouts,
+                                &mut link_paths,
+                            ) {
+                                eprintln!("Config link watcher could not be registered: {error}");
+                            }
+                            if let Err(error) = update_layout_watch(
+                                &mut watcher,
+                                &layouts_path,
+                                &mut watch_layouts,
+                                &watch_config,
+                                &watch_target,
+                                &link_paths,
+                            ) {
+                                eprintln!("Layout watcher could not be updated: {error}");
+                            }
+                            if let Err(error) = reload_state(&state) {
+                                eprintln!("Auto-reload failed: {error}");
+                            }
+                        }
+                        // Keep layout changes even when config bytes are unchanged or invalid.
+                        if changes.layouts {
+                            match reload_layouts(&state) {
+                                Ok(()) => {
+                                    let _ = app_handle.emit("layouts-reloaded", ());
+                                }
+                                Err(error) => eprintln!("Layout reload failed: {error}"),
+                            }
                         }
                     }
                 });
@@ -1714,6 +2234,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_layouts,
+            get_store_snapshot,
             list_languages,
             current_language,
             analyze_layout,
@@ -1772,6 +2293,1315 @@ mod filename_boundary_tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn lifecycle_state(root: &TestDir) -> AppState {
+        let dirs = OxeylyzerDirs::with_override(root.0.clone());
+        std::fs::create_dir_all(dirs.language_data_dir()).unwrap();
+        for name in ["english", "dutch"] {
+            let data = Data {
+                name: name.into(),
+                ..Data::default()
+            };
+            std::fs::write(
+                corpus_path_for(&dirs.language_data_dir(), name),
+                serde_json::to_vec(&data).unwrap(),
+            )
+            .unwrap();
+        }
+        let mut config = Config::with_defaults();
+        config.layouts.clear();
+        std::fs::write(
+            dirs.config_file(),
+            config_dto_to_toml(&config_to_dto(&config)),
+        )
+        .unwrap();
+        let engine = Arc::new(Oxeylyzer::new(
+            Data::load(dirs.data_dir().join(&config.corpus)).unwrap(),
+            config.clone(),
+        ));
+        AppState {
+            transition: Mutex::new(()),
+            engine_revision: AtomicU64::new(0),
+            engine_changed: Box::new(|_| {}),
+            active_corpus: Mutex::new(dirs.data_dir().join(&config.corpus)),
+            active_data_root: Mutex::new(dirs.data_dir().canonicalize().unwrap()),
+            config_contents: Mutex::new(std::fs::read(dirs.config_file()).unwrap()),
+            engine: Mutex::new(engine),
+            layouts: Mutex::new(HashMap::new()),
+            generated: Mutex::new(Vec::new()),
+            dirs,
+            config: Mutex::new(config),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            generating: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn watch_event(path: PathBuf) -> notify::Result<notify::Event> {
+        Ok(
+            notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Any))
+                .add_path(path),
+        )
+    }
+
+    #[test]
+    #[ignore = "requires native filesystem event delivery, unavailable in the managed execution environment"]
+    fn watcher_native_atomic_replacement_keeps_monitoring() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let config = state.dirs.config_file().canonicalize().unwrap();
+        let layouts = state.dirs.layouts_dir();
+        std::fs::create_dir_all(&layouts).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _watcher = watch_paths(tx, &config, &config, &layouts).unwrap();
+        let probe = config.with_extension("probe");
+        let ready_by = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            std::fs::write(&probe, b"readiness probe").unwrap();
+            if rx
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_ok_and(|result| result.is_ok_and(|event| event.paths.contains(&probe)))
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < ready_by,
+                "native watcher never reported readiness probe"
+            );
+        }
+
+        let wait_for_config = || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                let event = rx
+                    .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                    .expect("native watcher did not report config change")
+                    .unwrap();
+                if event.paths.iter().any(|path| path == &config) {
+                    break;
+                }
+            }
+        };
+        let mut dto = config_to_dto(&state.config.lock().unwrap());
+        dto.weights.sfbs = 123.0;
+        let temp = config.with_extension("tmp");
+        std::fs::write(&temp, config_dto_to_toml(&dto)).unwrap();
+        std::fs::rename(temp, &config).unwrap();
+        wait_for_config();
+        reload_state(&state).unwrap();
+        assert_eq!(state.config.lock().unwrap().weights.sfbs, 123.0);
+        // Drain replacement notifications before requiring a new write notification.
+        while rx
+            .recv_timeout(std::time::Duration::from_millis(400))
+            .is_ok()
+        {}
+        dto.corpus = "static/language_data/dutch.json".into();
+        std::fs::write(&config, config_dto_to_toml(&dto)).unwrap();
+        wait_for_config();
+        reload_state(&state).unwrap();
+        assert_eq!(state.engine.lock().unwrap().language, "dutch");
+    }
+
+    #[test]
+    fn watcher_failed_reload_does_not_block_next_batch() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let config = state.dirs.config_file();
+        let layouts = state.dirs.layouts_dir();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::fs::write(&config, "invalid = [").unwrap();
+        tx.send(watch_event(config.clone())).unwrap();
+        assert!(
+            next_watch_changes(
+                &rx,
+                &config,
+                &config,
+                &layouts,
+                &[],
+                std::time::Duration::from_millis(5)
+            )
+            .unwrap()
+            .config
+        );
+        assert!(reload_state(&state).is_err());
+        let mut dto = config_to_dto(&state.config.lock().unwrap());
+        dto.corpus = "static/language_data/dutch.json".into();
+        std::fs::write(&config, config_dto_to_toml(&dto)).unwrap();
+        tx.send(watch_event(config.clone())).unwrap();
+        assert!(
+            next_watch_changes(
+                &rx,
+                &config,
+                &config,
+                &layouts,
+                &[],
+                std::time::Duration::from_millis(5)
+            )
+            .unwrap()
+            .config
+        );
+        reload_state(&state).unwrap();
+        assert_eq!(state.engine.lock().unwrap().language, "dutch");
+    }
+
+    #[test]
+    fn watcher_rapid_edits_wait_for_trailing_write() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let config = state.dirs.config_file();
+        let layouts = state.dirs.layouts_dir();
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(watch_event(config.clone())).unwrap();
+        let second_tx = tx.clone();
+        let second_path = config.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let sent = std::time::Instant::now();
+            second_tx.send(watch_event(second_path)).unwrap();
+            sent
+        });
+        let changes = next_watch_changes(
+            &rx,
+            &config,
+            &config,
+            &layouts,
+            &[],
+            std::time::Duration::from_millis(40),
+        )
+        .unwrap();
+        assert!(changes.config);
+        assert!(writer.join().unwrap().elapsed() >= std::time::Duration::from_millis(40));
+    }
+
+    #[test]
+    fn watcher_remove_and_rename_preserve_categories() {
+        let config = PathBuf::from("/config/config.toml");
+        let layouts = PathBuf::from("/data/layouts");
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Ok(notify::Event::new(notify::EventKind::Remove(
+            notify::event::RemoveKind::File,
+        ))
+        .add_path(layouts.join("english/gust.dof"))))
+            .unwrap();
+        tx.send(Ok(notify::Event::new(notify::EventKind::Modify(
+            notify::event::ModifyKind::Name(notify::event::RenameMode::Both),
+        ))
+        .add_path(PathBuf::from("/config/new.tmp"))
+        .add_path(config.clone())))
+            .unwrap();
+        let changes = next_watch_changes(
+            &rx,
+            &config,
+            &config,
+            &layouts,
+            &[],
+            std::time::Duration::from_millis(5),
+        )
+        .unwrap();
+        assert_eq!(
+            changes,
+            WatchChanges {
+                config: true,
+                layouts: true
+            }
+        );
+    }
+
+    #[test]
+    fn store_snapshot_keeps_engine_and_layouts_from_same_transition() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let mut layout = Layout::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../oxeylyzer-core/static/layouts/gust.dof"
+        ))
+        .unwrap();
+        layout.name = "old".into();
+        state.layouts.lock().unwrap().insert("gust".into(), layout);
+        let (old_engine, old_layouts) = store_state_snapshot(&state);
+        let transition = state.transition.lock().unwrap();
+        let data = Data::load(corpus_path_for(&state.dirs.language_data_dir(), "dutch")).unwrap();
+        let config = state.config.lock().unwrap().clone();
+        *state.engine.lock().unwrap() = Arc::new(Oxeylyzer::new(data, config));
+        state.layouts.lock().unwrap().get_mut("gust").unwrap().name = "new".into();
+        drop(transition);
+        let (new_engine, new_layouts) = store_state_snapshot(&state);
+        assert_eq!(
+            (old_engine.language.as_str(), old_layouts[0].name.as_str()),
+            ("english", "old")
+        );
+        assert_eq!(
+            (new_engine.language.as_str(), new_layouts[0].name.as_str()),
+            ("dutch", "new")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watcher_switches_target_when_config_symlink_changes() {
+        use notify::Watcher;
+        use std::os::unix::fs::symlink;
+        #[derive(Default)]
+        struct RecordingWatcher {
+            added: Vec<PathBuf>,
+            removed: Vec<PathBuf>,
+        }
+        impl notify::Watcher for RecordingWatcher {
+            fn new<F: notify::EventHandler>(_: F, _: notify::Config) -> notify::Result<Self> {
+                Ok(Self::default())
+            }
+            fn watch(&mut self, path: &Path, _: notify::RecursiveMode) -> notify::Result<()> {
+                self.added.push(path.to_owned());
+                Ok(())
+            }
+            fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+                self.removed.push(path.to_owned());
+                Ok(())
+            }
+            fn kind() -> notify::WatcherKind {
+                notify::WatcherKind::PollWatcher
+            }
+        }
+        let root = TestDir::new();
+        let first = root.0.join("first");
+        let second = root.0.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(first.join("settings.toml"), "first").unwrap();
+        std::fs::write(second.join("settings.toml"), "second").unwrap();
+        let link = root.0.join("config.toml");
+        symlink(first.join("settings.toml"), &link).unwrap();
+        let mut target = link.canonicalize().unwrap();
+        let mut watcher = RecordingWatcher::default();
+        watcher
+            .watch(&first, notify::RecursiveMode::NonRecursive)
+            .unwrap();
+        std::fs::remove_file(&link).unwrap();
+        symlink(second.join("settings.toml"), &link).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(watch_event(link.clone())).unwrap();
+        assert!(
+            next_watch_changes(
+                &rx,
+                &link,
+                &target,
+                &root.0.join("layouts"),
+                &[],
+                std::time::Duration::from_millis(5)
+            )
+            .unwrap()
+            .config
+        );
+        update_config_watch(&mut watcher, &link, &mut target, &root.0.join("layouts")).unwrap();
+        assert_eq!(target, second.join("settings.toml").canonicalize().unwrap());
+        assert!(watcher.added.contains(&second.canonicalize().unwrap()));
+        assert!(watcher.removed.contains(&first.canonicalize().unwrap()));
+        tx.send(watch_event(target.clone())).unwrap();
+        assert!(
+            next_watch_changes(
+                &rx,
+                &link,
+                &target,
+                &root.0.join("layouts"),
+                &[],
+                std::time::Duration::from_millis(5)
+            )
+            .unwrap()
+            .config
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watcher_detects_intermediate_directory_symlink_replacement() {
+        use std::os::unix::fs::symlink;
+        let root = TestDir::new();
+        let base = root.0.canonicalize().unwrap();
+        let first = base.join("first");
+        let second = base.join("second");
+        let links = base.join("links");
+        for path in [&first, &second, &links] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        std::fs::write(first.join("settings.toml"), "first").unwrap();
+        std::fs::write(second.join("settings.toml"), "second").unwrap();
+        let intermediate = links.join("current");
+        symlink(&first, &intermediate).unwrap();
+        let config = base.join("config.toml");
+        symlink(intermediate.join("settings.toml"), &config).unwrap();
+        let target = config.canonicalize().unwrap();
+        let replacement = links.join("replacement");
+        symlink(&second, &replacement).unwrap();
+        std::fs::rename(replacement, &intermediate).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(watch_event(intermediate)).unwrap();
+        drop(tx);
+        assert!(
+            next_watch_changes(
+                &rx,
+                &config,
+                &target,
+                &root.0.join("layouts"),
+                &[],
+                std::time::Duration::from_millis(5),
+            )
+            .is_some_and(|changes| changes.config)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watcher_detects_replaced_link_after_it_becomes_a_directory() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new();
+        let root = root.0.canonicalize().unwrap();
+        let first = root.join("first");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::write(first.join("settings.toml"), "first").unwrap();
+        let intermediate = root.join("current");
+        symlink(&first, &intermediate).unwrap();
+        let config = root.join("config.toml");
+        symlink(intermediate.join("settings.toml"), &config).unwrap();
+        let target = config.canonicalize().unwrap();
+        let known_links = config_link_paths(&config);
+        std::fs::remove_file(&intermediate).unwrap();
+        std::fs::create_dir(&intermediate).unwrap();
+        std::fs::write(intermediate.join("settings.toml"), "second").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(watch_event(intermediate)).unwrap();
+        drop(tx);
+
+        assert!(
+            next_watch_changes(
+                &rx,
+                &config,
+                &target,
+                &root.join("layouts"),
+                &known_links,
+                std::time::Duration::from_millis(5),
+            )
+            .is_some_and(|changes| changes.config)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn polling_watcher_follows_retargeted_data_directory() {
+        use notify::Watcher;
+        use std::os::unix::fs::symlink;
+        use std::time::{Duration, Instant};
+
+        let root = TestDir::new();
+        let root = root.0.canonicalize().unwrap();
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::create_dir_all(first.join("static/layouts")).unwrap();
+        std::fs::create_dir_all(second.join("static/layouts")).unwrap();
+        std::fs::write(first.join("config.toml"), "first").unwrap();
+        std::thread::sleep(Duration::from_secs(1));
+        std::fs::write(second.join("config.toml"), "second").unwrap();
+        let link = root.join("data");
+        symlink(&first, &link).unwrap();
+        let config = config_watch_path(&link.join("config.toml")).unwrap();
+        assert!(config_link_paths(&config).contains(&link));
+
+        let mut layouts = first.join("static/layouts");
+        let mut target = config.canonicalize().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = notify::PollWatcher::new(
+            tx,
+            notify::Config::default()
+                .with_poll_interval(Duration::from_millis(30))
+                .with_compare_contents(true),
+        )
+        .unwrap();
+        watcher
+            .watch(
+                config.parent().unwrap(),
+                notify::RecursiveMode::NonRecursive,
+            )
+            .unwrap();
+        watcher
+            .watch(
+                target.parent().unwrap(),
+                notify::RecursiveMode::NonRecursive,
+            )
+            .unwrap();
+        watcher
+            .watch(&layouts, notify::RecursiveMode::Recursive)
+            .unwrap();
+        let mut links_watched = Vec::new();
+        update_link_watches(&mut watcher, &config, &target, &layouts, &mut links_watched).unwrap();
+
+        let replacement = root.join("replacement");
+        symlink(&second, &replacement).unwrap();
+        std::fs::rename(replacement, &link).unwrap();
+        let wait_for = |wanted: &Path| {
+            let end = Instant::now() + Duration::from_secs(5);
+            loop {
+                let event = rx
+                    .recv_timeout(end.saturating_duration_since(Instant::now()))
+                    .expect("watcher did not report change");
+                if let Ok(event) = event
+                    && event.paths.iter().any(|path| path == wanted)
+                {
+                    break event;
+                }
+            }
+        };
+        let event = wait_for(&link);
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        event_tx.send(Ok(event)).unwrap();
+        drop(event_tx);
+        assert!(
+            next_watch_changes(
+                &event_rx,
+                &config,
+                &target,
+                &layouts,
+                &[],
+                Duration::from_millis(5)
+            )
+            .unwrap()
+            .config
+        );
+        update_config_watch(&mut watcher, &config, &mut target, &layouts).unwrap();
+        update_link_watches(&mut watcher, &config, &target, &layouts, &mut links_watched).unwrap();
+        update_layout_watch(
+            &mut watcher,
+            &link.join("static/layouts"),
+            &mut layouts,
+            &config,
+            &target,
+            &links_watched,
+        )
+        .unwrap();
+        assert_eq!(target, second.join("config.toml"));
+        std::fs::write(&target, "second changed").unwrap();
+        wait_for(&target);
+        let new_layout = second.join("static/layouts/new.dof");
+        std::fs::write(&new_layout, "layout").unwrap();
+        let event = wait_for(&new_layout);
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        event_tx.send(Ok(event)).unwrap();
+        drop(event_tx);
+        assert!(
+            next_watch_changes(
+                &event_rx,
+                &config,
+                &target,
+                &layouts,
+                &[],
+                Duration::from_millis(5)
+            )
+            .unwrap()
+            .layouts
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn polling_watcher_follows_intermediate_directory_symlink() {
+        use notify::Watcher;
+        use std::os::unix::fs::symlink;
+        use std::time::Duration;
+        let root = TestDir::new();
+        let root = root.0.canonicalize().unwrap();
+        let first = root.join("first");
+        let second = root.join("second");
+        let links = root.join("links");
+        for path in [&first, &second, &links] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        std::fs::write(first.join("settings.toml"), "first").unwrap();
+        // PollWatcher compares followed directory modification times in whole seconds.
+        std::thread::sleep(Duration::from_secs(1));
+        std::fs::write(second.join("settings.toml"), "second").unwrap();
+        let intermediate = links.join("current");
+        symlink(&first, &intermediate).unwrap();
+        let config = root.join("config.toml");
+        symlink(intermediate.join("settings.toml"), &config).unwrap();
+        let layouts = root.join("layouts");
+        let mut target = config.canonicalize().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = notify::PollWatcher::new(
+            tx,
+            notify::Config::default()
+                .with_poll_interval(Duration::from_millis(30))
+                .with_compare_contents(true),
+        )
+        .unwrap();
+        watcher
+            .watch(
+                config.parent().unwrap(),
+                notify::RecursiveMode::NonRecursive,
+            )
+            .unwrap();
+        watcher
+            .watch(
+                target.parent().unwrap(),
+                notify::RecursiveMode::NonRecursive,
+            )
+            .unwrap();
+        let mut links_watched = Vec::new();
+        update_link_watches(&mut watcher, &config, &target, &layouts, &mut links_watched).unwrap();
+        let replacement = links.join("replacement");
+        symlink(&second, &replacement).unwrap();
+        std::fs::rename(replacement, &intermediate).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let event = rx
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("missing link event");
+            if event.is_ok_and(|event| event.paths.contains(&intermediate)) {
+                break;
+            }
+        }
+        update_config_watch(&mut watcher, &config, &mut target, &layouts).unwrap();
+        update_link_watches(&mut watcher, &config, &target, &layouts, &mut links_watched).unwrap();
+        assert_eq!(target, second.join("settings.toml"));
+        std::fs::write(&target, "second changed").unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let event = rx
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("missing target event");
+            if event.is_ok_and(|event| event.paths.contains(&target)) {
+                break;
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn polling_watcher_detects_retarget_and_new_target_edits() {
+        use notify::Watcher;
+        use std::os::unix::fs::symlink;
+        use std::time::{Duration, Instant};
+        let root = TestDir::new();
+        let first = root.0.join("first");
+        let second = root.0.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(first.join("settings.toml"), "first").unwrap();
+        std::fs::write(second.join("settings.toml"), "second").unwrap();
+        let link = root.0.canonicalize().unwrap().join("config.toml");
+        symlink(first.join("settings.toml"), &link).unwrap();
+        let mut target = link.canonicalize().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = notify::PollWatcher::new(
+            tx,
+            notify::Config::default()
+                .with_poll_interval(Duration::from_millis(50))
+                .with_compare_contents(true),
+        )
+        .unwrap();
+        watcher
+            .watch(link.parent().unwrap(), notify::RecursiveMode::NonRecursive)
+            .unwrap();
+        watcher
+            .watch(
+                target.parent().unwrap(),
+                notify::RecursiveMode::NonRecursive,
+            )
+            .unwrap();
+        let replacement = link.with_extension("new");
+        symlink(second.join("settings.toml"), &replacement).unwrap();
+        std::fs::rename(replacement, &link).unwrap();
+        let wait_for = |wanted: &Path| {
+            let end = Instant::now() + Duration::from_secs(5);
+            loop {
+                let event = rx
+                    .recv_timeout(end.saturating_duration_since(Instant::now()))
+                    .expect("watcher did not report change");
+                if event.is_ok_and(|event| event.paths.iter().any(|path| path == wanted)) {
+                    break;
+                }
+            }
+        };
+        wait_for(&link);
+        update_config_watch(&mut watcher, &link, &mut target, &root.0.join("layouts")).unwrap();
+        std::fs::write(&target, "second changed").unwrap();
+        wait_for(&target);
+    }
+
+    #[test]
+    fn layout_snapshot_waits_for_engine_transition() {
+        let root = TestDir::new();
+        let state = Arc::new(lifecycle_state(&root));
+        let layout = Layout::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../oxeylyzer-core/static/layouts/gust.dof"
+        ))
+        .unwrap();
+        state.layouts.lock().unwrap().insert("gust".into(), layout);
+        let transition = state.transition.lock().unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let reader = {
+            let state = state.clone();
+            std::thread::spawn(move || {
+                started_tx.send(()).unwrap();
+                let (engine, layout) = layout_snapshot(&state, "gust").unwrap();
+                done_tx
+                    .send((engine.language.clone(), layout.name))
+                    .unwrap();
+            })
+        };
+        started_rx.recv().unwrap();
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(30))
+                .is_err()
+        );
+        let corpus = corpus_path_for(&state.dirs.language_data_dir(), "dutch");
+        let data = Data::load(&corpus).unwrap();
+        let config = state.config.lock().unwrap().clone();
+        *state.engine.lock().unwrap() = Arc::new(Oxeylyzer::new(data, config));
+        state.layouts.lock().unwrap().get_mut("gust").unwrap().name = "new layout".into();
+        drop(transition);
+        assert_eq!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap(),
+            ("dutch".into(), "new layout".into())
+        );
+        reader.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_save_follows_symlink_and_preserves_it() {
+        use std::os::unix::fs::symlink;
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let config = state.dirs.config_file();
+        let target = root.0.join("actual-config.toml");
+        std::fs::rename(&config, &target).unwrap();
+        symlink(&target, &config).unwrap();
+        let snapshot = get_config_state(&state);
+        let mut changed = snapshot.config;
+        changed.weights.sfbs = 123.0;
+        save_config_state(&state, changed, &snapshot.revision).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&config)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let saved: Config = toml::from_str(&std::fs::read_to_string(target).unwrap()).unwrap();
+        assert_eq!(saved.weights.sfbs, 123.0);
+    }
+
+    #[test]
+    fn watcher_layout_reload_preserves_current_engine_and_generation() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let engine = state.engine.lock().unwrap().clone();
+        state
+            .generated
+            .lock()
+            .unwrap()
+            .push(generation_result(&engine));
+        reload_layouts(&state).unwrap();
+        assert!(Arc::ptr_eq(&engine, &state.engine.lock().unwrap()));
+        assert_eq!(state.generated.lock().unwrap().len(), 1);
+        assert!(!state.cancel_flag.load(Ordering::Relaxed));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn layout_reload_uses_active_root_after_failed_data_retarget() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new();
+        let first = TestDir::new();
+        let second = TestDir::new();
+        let mut state = lifecycle_state(&first);
+        let _second_state = lifecycle_state(&second);
+        let mut layout = Layout::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../oxeylyzer-core/static/layouts/gust.dof"
+        ))
+        .unwrap();
+        for (dir, name) in [(&first, "first"), (&second, "second")] {
+            let layouts = dir.0.join("static/layouts");
+            std::fs::create_dir_all(&layouts).unwrap();
+            layout.name = name.into();
+            std::fs::write(
+                layouts.join("layout.dof"),
+                serde_json::to_vec(&layout).unwrap(),
+            )
+            .unwrap();
+        }
+        let config = state.config.lock().unwrap().clone();
+        state.config.lock().unwrap().layouts = vec!["static/layouts/*.dof".into()];
+        let link = root.0.join("data");
+        symlink(&first.0, &link).unwrap();
+        state.dirs = OxeylyzerDirs::with_override(link.clone());
+        std::fs::write(second.0.join("config.toml"), "invalid = [").unwrap();
+        let replacement = root.0.join("replacement");
+        symlink(&second.0, &replacement).unwrap();
+        std::fs::rename(replacement, &link).unwrap();
+
+        assert!(reload_state(&state).is_err());
+        reload_layouts(&state).unwrap();
+        assert!(state.layouts.lock().unwrap().contains_key("first"));
+        assert!(!state.layouts.lock().unwrap().contains_key("second"));
+        assert_eq!(state.engine.lock().unwrap().language, "english");
+        assert_eq!(config.corpus, state.config.lock().unwrap().corpus);
+    }
+
+    #[test]
+    fn watcher_mixed_categories_survive_one_burst() {
+        let config = PathBuf::from("/config/config.toml");
+        let layouts = PathBuf::from("/data/layouts");
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(watch_event(config.clone())).unwrap();
+        tx.send(watch_event(layouts.join("english/gust.dof")))
+            .unwrap();
+        let changes = next_watch_changes(
+            &rx,
+            &config,
+            &config,
+            &layouts,
+            &[],
+            std::time::Duration::from_millis(10),
+        )
+        .unwrap();
+        assert_eq!(
+            changes,
+            WatchChanges {
+                config: true,
+                layouts: true
+            }
+        );
+    }
+
+    #[test]
+    fn watcher_unrelated_parent_events_are_ignored() {
+        let config = PathBuf::from("/config/config.toml");
+        let layouts = PathBuf::from("/data/layouts");
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(watch_event(PathBuf::from("/config/unrelated.toml")))
+            .unwrap();
+        drop(tx);
+        assert_eq!(
+            next_watch_changes(
+                &rx,
+                &config,
+                &config,
+                &layouts,
+                &[],
+                std::time::Duration::from_millis(10)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn watcher_invalid_then_valid_burst_loads_latest() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let config = state.dirs.config_file();
+        let layouts = state.dirs.layouts_dir();
+        let mut dto = config_to_dto(&state.config.lock().unwrap());
+        dto.corpus = "static/language_data/dutch.json".into();
+        std::fs::write(&config, "invalid = [").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(watch_event(config.clone())).unwrap();
+        let write_path = config.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            std::fs::write(&write_path, config_dto_to_toml(&dto)).unwrap();
+            tx.send(watch_event(write_path)).unwrap();
+        });
+        let changes = next_watch_changes(
+            &rx,
+            &config,
+            &config,
+            &layouts,
+            &[],
+            std::time::Duration::from_millis(60),
+        )
+        .unwrap();
+        assert!(changes.config);
+        let result = reload_state(&state);
+        writer.join().unwrap();
+        result.unwrap();
+        assert_eq!(state.engine.lock().unwrap().language, "dutch");
+    }
+
+    fn generation_result(engine: &Oxeylyzer) -> FastLayout {
+        let layout = Layout::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../oxeylyzer-core/static/layouts/gust.dof"
+        ))
+        .unwrap();
+        engine.fast_layout(&layout, &[])
+    }
+
+    #[test]
+    fn lifecycle_engine_invalidation_signals_only_actual_transitions() {
+        let root = TestDir::new();
+        let mut state = lifecycle_state(&root);
+        let revisions = Arc::new(Mutex::new(Vec::new()));
+        let state_ref = Arc::new(Mutex::new(None::<std::sync::Weak<AppState>>));
+        state.engine_changed = Box::new({
+            let revisions = revisions.clone();
+            let state_ref = state_ref.clone();
+            move |revision| {
+                let state = state_ref
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .upgrade()
+                    .unwrap();
+                assert!(state.transition.try_lock().is_err());
+                assert!(state.generated.lock().unwrap().is_empty());
+                assert_eq!(state.engine_revision.load(Ordering::Relaxed), revision);
+                revisions.lock().unwrap().push(revision);
+            }
+        });
+        let state = Arc::new(state);
+        *state_ref.lock().unwrap() = Some(Arc::downgrade(&state));
+        set_language_state(&state, "dutch").unwrap();
+        assert_eq!(*revisions.lock().unwrap(), vec![1]);
+        let snapshot = get_config_state(&state);
+        save_config_state(&state, snapshot.config, &snapshot.revision).unwrap();
+        assert_eq!(*revisions.lock().unwrap(), vec![1, 2]);
+        let mut dto = config_to_dto(&state.config.lock().unwrap());
+        dto.weights.sfbs = 123.0;
+        std::fs::write(state.dirs.config_file(), config_dto_to_toml(&dto)).unwrap();
+        reload_state(&state).unwrap();
+        assert_eq!(*revisions.lock().unwrap(), vec![1, 2, 3]);
+
+        let engine = state.engine.lock().unwrap().clone();
+        let result = generation_result(&engine);
+        let dto = layout_to_dto(&engine, &result.clone().into());
+        finish_generation(
+            &state,
+            &engine,
+            3,
+            vec![result],
+            vec![dto],
+            false,
+            |event| {
+                assert_eq!(event["revision"], 3);
+                assert_eq!(event["results"].as_array().unwrap().len(), 1);
+                assert_eq!(*revisions.lock().unwrap(), vec![1, 2, 3]);
+            },
+        );
+        // A delayed self-save notification must not invalidate the new results.
+        reload_state(&state).unwrap();
+        assert_eq!(*revisions.lock().unwrap(), vec![1, 2, 3]);
+        assert_eq!(state.generated.lock().unwrap().len(), 1);
+        std::fs::write(state.dirs.config_file(), "invalid = [").unwrap();
+        assert!(reload_state(&state).is_err());
+        assert_eq!(*revisions.lock().unwrap(), vec![1, 2, 3]);
+        set_language_state(&state, "english").unwrap();
+        assert_eq!(*revisions.lock().unwrap(), vec![1, 2, 3, 4]);
+        assert!(state.generated.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn lifecycle_generation_replacement_before_completion_discards_results() {
+        let root = TestDir::new();
+        let state = Arc::new(lifecycle_state(&root));
+        let engine = state.engine.lock().unwrap().clone();
+        let result = generation_result(&engine);
+        let dto = layout_to_dto(&engine, &result.clone().into());
+        state.generating.store(true, Ordering::SeqCst);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let worker_state = state.clone();
+        let worker = std::thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            finish_rx.recv().unwrap();
+            let mut event = None;
+            finish_generation(
+                &worker_state,
+                &engine,
+                0,
+                vec![result],
+                vec![dto],
+                false,
+                |payload| event = Some(payload),
+            );
+            event.unwrap()
+        });
+        ready_rx.recv().unwrap();
+        set_language_state(&state, "dutch").unwrap();
+        assert!(state.cancel_flag.load(Ordering::Relaxed));
+        assert!(state.generating.load(Ordering::SeqCst));
+        finish_tx.send(()).unwrap();
+        let event = worker.join().unwrap();
+        assert!(
+            state.generated.lock().unwrap().is_empty(),
+            "stale results became saveable"
+        );
+        assert_eq!(event["results"], serde_json::json!([]));
+        assert_eq!(event["cancelled"], true);
+        assert_eq!(event["revision"], 0);
+        assert!(event["reason"].as_str().is_some_and(|s| !s.is_empty()));
+        assert!(!state.generating.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn lifecycle_generation_ordinary_cancel_keeps_partial_results() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let engine = state.engine.lock().unwrap().clone();
+        let result = generation_result(&engine);
+        let dto = layout_to_dto(&engine, &result.clone().into());
+        let expected_dto = serde_json::to_value(&dto).unwrap();
+        state.cancel_flag.store(true, Ordering::Relaxed);
+        state.generating.store(true, Ordering::SeqCst);
+        let mut event = None;
+        finish_generation(
+            &state,
+            &engine,
+            0,
+            vec![result],
+            vec![dto],
+            true,
+            |payload| {
+                assert!(
+                    state.transition.try_lock().is_err(),
+                    "publication must exclude engine replacement"
+                );
+                assert!(!state.generating.load(Ordering::SeqCst));
+                event = Some(payload);
+            },
+        );
+        assert_eq!(state.generated.lock().unwrap().len(), 1);
+        let event = event.unwrap();
+        assert_eq!(event["results"], serde_json::json!([expected_dto]));
+        assert_eq!(event["cancelled"], true);
+        assert!(event["reason"].is_null());
+        assert!(!state.generating.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn lifecycle_switch_then_save_preserves_session_corpus() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        set_language_state(&state, "dutch").unwrap();
+        let snapshot = get_config_state(&state);
+        let mut dto = snapshot.config;
+        dto.weights.sfbs = 123.0;
+        save_config_state(&state, dto, &snapshot.revision).unwrap();
+        assert_eq!(state.engine.lock().unwrap().language, "dutch");
+        let saved = Config::with_loaded_weights(state.dirs.config_file()).unwrap();
+        assert!(saved.corpus.ends_with("english.json"));
+    }
+
+    #[test]
+    fn lifecycle_external_unchanged_corpus_preserves_session_selection() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        set_language_state(&state, "dutch").unwrap();
+        let mut dto = config_to_dto(&state.config.lock().unwrap());
+        dto.weights.sfbs = 123.0;
+        std::fs::write(state.dirs.config_file(), config_dto_to_toml(&dto)).unwrap();
+        reload_state(&state).unwrap();
+        assert_eq!(state.engine.lock().unwrap().language, "dutch");
+        assert_eq!(state.config.lock().unwrap().weights.sfbs, 123.0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_reloads_retargeted_data_directory_with_unchanged_config() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new();
+        let first = TestDir::new();
+        let second = TestDir::new();
+        let mut state = lifecycle_state(&first);
+        let _second_state = lifecycle_state(&second);
+        let data = Data {
+            name: "replacement".into(),
+            ..Data::default()
+        };
+        std::fs::write(
+            corpus_path_for(&second.0.join("static/language_data"), "english"),
+            serde_json::to_vec(&data).unwrap(),
+        )
+        .unwrap();
+        let link = root.0.join("data");
+        symlink(&first.0, &link).unwrap();
+        state.dirs = OxeylyzerDirs::with_override(link.clone());
+        *state.active_corpus.lock().unwrap() = link.join(&state.config.lock().unwrap().corpus);
+
+        let replacement = root.0.join("replacement");
+        symlink(&second.0, &replacement).unwrap();
+        std::fs::rename(replacement, link).unwrap();
+        reload_state(&state).unwrap();
+
+        assert_eq!(state.engine.lock().unwrap().language, "replacement");
+    }
+
+    #[test]
+    fn lifecycle_external_changed_corpus_selects_new_language() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let mut dto = config_to_dto(&state.config.lock().unwrap());
+        dto.corpus = "static/language_data/dutch.json".into();
+        std::fs::write(state.dirs.config_file(), config_dto_to_toml(&dto)).unwrap();
+        reload_state(&state).unwrap();
+        assert_eq!(state.engine.lock().unwrap().language, "dutch");
+    }
+
+    #[test]
+    fn config_save_round_trips_control_characters_in_paths() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let snapshot = get_config_state(&state);
+        let mut config = snapshot.config;
+        config.layouts = vec!["layouts/with\u{7f}character".into()];
+        config.corpus_configs = "rules/with\u{1}character".into();
+        save_config_state(&state, config, &snapshot.revision).unwrap();
+        let saved = Config::with_loaded_weights(state.dirs.config_file()).unwrap();
+        assert_eq!(
+            saved.layouts,
+            vec![PathBuf::from("layouts/with\u{7f}character")]
+        );
+        assert_eq!(
+            saved.corpus_configs,
+            PathBuf::from("rules/with\u{1}character")
+        );
+    }
+
+    #[test]
+    fn lifecycle_failed_preparation_preserves_file_and_engine() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let original = std::fs::read(state.dirs.config_file()).unwrap();
+        let engine = state.engine.lock().unwrap().clone();
+        let snapshot = get_config_state(&state);
+        let mut dto = snapshot.config;
+        dto.corpus = "missing.json".into();
+        assert!(save_config_state(&state, dto, &snapshot.revision).is_err());
+        assert_eq!(std::fs::read(state.dirs.config_file()).unwrap(), original);
+        assert!(Arc::ptr_eq(&engine, &state.engine.lock().unwrap()));
+    }
+
+    #[test]
+    fn config_save_preserves_state_when_a_matched_layout_is_invalid() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let layouts = state.dirs.layouts_dir();
+        std::fs::create_dir_all(&layouts).unwrap();
+        let path = layouts.join("gust.dof");
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../oxeylyzer-core/static/layouts/gust.dof"
+            ),
+            &path,
+        )
+        .unwrap();
+        let mut dto = get_config_state(&state).config;
+        dto.layouts = vec!["static/layouts/*.dof".into()];
+        std::fs::write(state.dirs.config_file(), config_dto_to_toml(&dto)).unwrap();
+        reload_state(&state).unwrap();
+        assert!(state.layouts.lock().unwrap().contains_key("gust"));
+        let engine = state.engine.lock().unwrap().clone();
+        let original = std::fs::read(state.dirs.config_file()).unwrap();
+        std::fs::write(path, "invalid layout").unwrap();
+        assert!(reload_layouts(&state).is_err());
+        assert!(state.layouts.lock().unwrap().contains_key("gust"));
+        let snapshot = get_config_state(&state);
+        dto = snapshot.config;
+        dto.weights.sfbs = 123.0;
+
+        assert!(save_config_state(&state, dto, &snapshot.revision).is_err());
+        assert_eq!(std::fs::read(state.dirs.config_file()).unwrap(), original);
+        assert!(Arc::ptr_eq(&engine, &state.engine.lock().unwrap()));
+        assert!(state.layouts.lock().unwrap().contains_key("gust"));
+    }
+
+    #[test]
+    fn watcher_layout_repair_retries_pending_config() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let layouts = state.dirs.layouts_dir();
+        std::fs::create_dir_all(&layouts).unwrap();
+        let path = layouts.join("gust.dof");
+        let valid_layout = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../oxeylyzer-core/static/layouts/gust.dof"
+        ));
+        std::fs::write(&path, valid_layout).unwrap();
+        let mut dto = get_config_state(&state).config;
+        dto.layouts = vec!["static/layouts/*.dof".into()];
+        std::fs::write(state.dirs.config_file(), config_dto_to_toml(&dto)).unwrap();
+        reload_state(&state).unwrap();
+        let engine = state.engine.lock().unwrap().clone();
+
+        std::fs::write(&path, "invalid layout").unwrap();
+        dto.weights.sfbs = 123.0;
+        let contents = config_dto_to_toml(&dto);
+        std::fs::write(state.dirs.config_file(), &contents).unwrap();
+        assert!(reload_state(&state).is_err());
+        assert!(reload_layouts(&state).is_err());
+        assert!(Arc::ptr_eq(&engine, &state.engine.lock().unwrap()));
+
+        std::fs::write(&path, valid_layout).unwrap();
+        reload_layouts(&state).unwrap();
+
+        assert_eq!(state.config.lock().unwrap().weights.sfbs, 123.0);
+        assert!(!Arc::ptr_eq(&engine, &state.engine.lock().unwrap()));
+        assert_eq!(*state.config_contents.lock().unwrap(), contents.as_bytes());
+        assert!(state.layouts.lock().unwrap().contains_key("gust"));
+    }
+
+    #[test]
+    fn lifecycle_self_save_event_keeps_the_published_engine() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        set_language_state(&state, "dutch").unwrap();
+        let snapshot = get_config_state(&state);
+        save_config_state(&state, snapshot.config, &snapshot.revision).unwrap();
+        let engine = state.engine.lock().unwrap().clone();
+        reload_state(&state).unwrap();
+        assert!(Arc::ptr_eq(&engine, &state.engine.lock().unwrap()));
+        assert_eq!(state.engine.lock().unwrap().language, "dutch");
+    }
+
+    #[test]
+    fn lifecycle_external_conflict_preserves_file_engine_and_cleans_temporary_file() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let engine = state.engine.lock().unwrap().clone();
+        let snapshot = get_config_state(&state);
+        let external = b"an external edit not yet reloaded";
+        std::fs::write(state.dirs.config_file(), external).unwrap();
+        assert!(
+            save_config_state(&state, snapshot.config, &snapshot.revision)
+                .unwrap_err()
+                .contains("changed externally")
+        );
+        assert_eq!(std::fs::read(state.dirs.config_file()).unwrap(), external);
+        assert!(Arc::ptr_eq(&engine, &state.engine.lock().unwrap()));
+        assert!(
+            !std::fs::read_dir(&root.0)
+                .unwrap()
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+        );
+    }
+
+    #[test]
+    fn lifecycle_stale_form_after_external_reload_preserves_file_and_active_state() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let snapshot = get_config_state(&state);
+        let mut stale = snapshot.config;
+        stale.weights.sfbs = 123.0;
+        let mut external = config_to_dto(&state.config.lock().unwrap());
+        external.corpus = "static/language_data/dutch.json".into();
+        external.weights.sfbs = 456.0;
+        let external_contents = config_dto_to_toml(&external).into_bytes();
+        std::fs::write(state.dirs.config_file(), &external_contents).unwrap();
+        reload_state(&state).unwrap();
+        let engine = state.engine.lock().unwrap().clone();
+        let active_corpus = state.active_corpus.lock().unwrap().clone();
+
+        assert!(save_config_state(&state, stale, &snapshot.revision).is_err());
+
+        assert_eq!(
+            std::fs::read(state.dirs.config_file()).unwrap(),
+            external_contents
+        );
+        assert_eq!(*state.config_contents.lock().unwrap(), external_contents);
+        assert!(Arc::ptr_eq(&engine, &state.engine.lock().unwrap()));
+        assert_eq!(*state.active_corpus.lock().unwrap(), active_corpus);
+        assert_eq!(state.engine.lock().unwrap().language, "dutch");
+        assert_eq!(state.config.lock().unwrap().weights.sfbs, 456.0);
+    }
+
+    #[test]
+    fn lifecycle_saved_revision_accepts_successive_form_edits() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let snapshot = get_config_state(&state);
+        let mut form = snapshot.config;
+        form.weights.sfbs = 123.0;
+        let saved_revision = save_config_state(&state, form.clone(), &snapshot.revision).unwrap();
+        assert_ne!(saved_revision, snapshot.revision);
+        assert_eq!(saved_revision, get_config_state(&state).revision);
+
+        form.weights.sfbs = 456.0;
+        let latest_revision = save_config_state(&state, form, &saved_revision).unwrap();
+
+        assert_eq!(
+            std::fs::read(state.dirs.config_file()).unwrap(),
+            latest_revision
+        );
+        assert_eq!(get_config_state(&state).revision, latest_revision);
+        assert_eq!(state.config.lock().unwrap().weights.sfbs, 456.0);
+        assert_eq!(
+            Config::with_loaded_weights(state.dirs.config_file())
+                .unwrap()
+                .weights
+                .sfbs,
+            456.0
+        );
+    }
+
+    #[test]
+    fn lifecycle_invalid_external_write_can_be_followed_by_valid_write() {
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let engine = state.engine.lock().unwrap().clone();
+        let mut dto = config_to_dto(&state.config.lock().unwrap());
+        std::fs::write(state.dirs.config_file(), "invalid = [").unwrap();
+        assert!(reload_state(&state).is_err());
+        assert!(Arc::ptr_eq(&engine, &state.engine.lock().unwrap()));
+        dto.corpus = "static/language_data/dutch.json".into();
+        std::fs::write(state.dirs.config_file(), config_dto_to_toml(&dto)).unwrap();
+        reload_state(&state).unwrap();
+        assert_eq!(state.engine.lock().unwrap().language, "dutch");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_save_rejects_read_only_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let path = state.dirs.config_file();
+        let original = std::fs::read(&path).unwrap();
+        let engine = state.engine.lock().unwrap().clone();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+        if std::fs::OpenOptions::new().write(true).open(&path).is_ok() {
+            return;
+        }
+        let snapshot = get_config_state(&state);
+        assert!(save_config_state(&state, snapshot.config, &snapshot.revision).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(Arc::ptr_eq(&engine, &state.engine.lock().unwrap()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_atomic_replace_preserves_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = TestDir::new();
+        let state = lifecycle_state(&root);
+        let path = state.dirs.config_file();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let snapshot = get_config_state(&state);
+        save_config_state(&state, snapshot.config, &snapshot.revision).unwrap();
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]

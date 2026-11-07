@@ -6,12 +6,18 @@ import { appStore } from "../store";
 import { startGenerate, saveGenerated, cancelGenerate } from "../api";
 import type { Layout } from "../types";
 import { listen } from "@tauri-apps/api/event";
+import { generationResultsAfterEvent } from "../generationResults";
+import type { GenerationEvent, GenerationResults } from "../generationResults";
 
 type SaveState = { name: string; saved: boolean };
 
 const ALGORITHMS: { id: string; label: string; hint: string }[] = [
   { id: "hill", label: "hill climb", hint: "fastest — many layouts per second" },
-  { id: "ils", label: "iterated local search", hint: "best quality — finds the optimum most reliably" },
+  {
+    id: "ils",
+    label: "iterated local search",
+    hint: "best quality — finds the optimum most reliably",
+  },
   { id: "sa", label: "simulated annealing", hint: "good quality, faster than ils" },
   { id: "lahc", label: "late acceptance", hint: "consistent results, slower" },
 ];
@@ -37,9 +43,16 @@ export default function GenerateView() {
   }
   const [running, setRunning] = createSignal(false);
   const [cancelling, setCancelling] = createSignal(false);
-  const [wasCancelled, setWasCancelled] = createSignal(false);
+  const [generationResults, setGenerationResults] = createSignal<GenerationResults>({
+    revision: 0,
+    results: [],
+    cancelled: false,
+    reason: null,
+  });
+  const results = () => generationResults().results;
+  const wasCancelled = () => generationResults().cancelled;
+  const stopReason = () => generationResults().reason;
   const [progress, setProgress] = createSignal<{ done: number; total: number } | null>(null);
-  const [results, setResults] = createSignal<Layout[]>([]);
   const [saveStates, setSaveStates] = createSignal<SaveState[]>([]);
   const [error, setError] = createSignal("");
 
@@ -50,10 +63,25 @@ export default function GenerateView() {
     unlisteners = [];
   };
 
-  onCleanup(clearListeners);
+  const engineUnlisten = listen<number>("engine-changed", (e) => {
+    applyGenerationEvent({ type: "engine-changed", revision: e.payload });
+  });
+  onCleanup(() => {
+    clearListeners();
+    void engineUnlisten.then((unlisten) => unlisten());
+  });
 
   function initSaveStates(layouts: Layout[]) {
     setSaveStates(layouts.map((l) => ({ name: l.name, saved: false })));
+  }
+
+  function applyGenerationEvent(event: GenerationEvent) {
+    const current = generationResults();
+    const next = generationResultsAfterEvent(current, event);
+    if (next !== current) {
+      setGenerationResults(next);
+      initSaveStates(next.results);
+    }
   }
 
   async function handleGenerate() {
@@ -61,31 +89,31 @@ export default function GenerateView() {
 
     setRunning(true);
     setCancelling(false);
-    setWasCancelled(false);
-    setResults([]);
+    setGenerationResults((previous) => ({
+      ...previous,
+      results: [],
+      cancelled: false,
+      reason: null,
+    }));
+    setSaveStates([]);
     setProgress({ done: 0, total: count() });
     setError("");
 
+    await engineUnlisten;
     const progressUnlisten = await listen<{ done: number; total: number }>(
       "generate-progress",
       (e) => setProgress(e.payload),
     );
 
-    // A single done event carries the results; `cancelled: true` means the run
-    // was stopped early and these are the (still valid) partial results.
-    const doneUnlisten = await listen<{ results: Layout[]; cancelled: boolean }>(
-      "generate-done",
-      (e) => {
-        setResults(e.payload.results);
-        initSaveStates(e.payload.results);
-        setWasCancelled(e.payload.cancelled);
-        setVisibleCount(10);
-        setRunning(false);
-        setCancelling(false);
-        setProgress(null);
-        clearListeners();
-      },
-    );
+    // Ordinary cancellation keeps partial results; engine invalidation discards them.
+    const doneUnlisten = await listen<GenerationResults>("generate-done", (e) => {
+      applyGenerationEvent({ type: "completed", payload: e.payload });
+      setVisibleCount(10);
+      setRunning(false);
+      setCancelling(false);
+      setProgress(null);
+      clearListeners();
+    });
 
     unlisteners = [progressUnlisten, doneUnlisten];
 
@@ -221,7 +249,11 @@ export default function GenerateView() {
         <div class="text-red-400 text-sm font-mono">{error()}</div>
       </Show>
 
-      <Show when={wasCancelled() && results().length === 0}>
+      <Show when={stopReason()}>
+        <div class="text-yellow-500 text-sm font-mono">{stopReason()}</div>
+      </Show>
+
+      <Show when={wasCancelled() && !stopReason() && results().length === 0}>
         <div class="text-yellow-500 text-sm font-mono">
           Cancelled before any layouts were finished.
         </div>

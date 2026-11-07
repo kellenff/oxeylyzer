@@ -32,17 +32,16 @@ function App() {
   let sessionRestored = false;
 
   onMount(async () => {
-    await initStore();
-
     // Refresh (without unmounting views) when files change on disk —
-    // config-reloaded means the engine was rebuilt, layouts-reloaded means
+    // engine-changed means the engine was rebuilt, layouts-reloaded means
     // only layout files changed (e.g. the app's own saves).
-    const unlistenConfig = await listen("config-reloaded", () => refreshStore());
+    const unlistenConfig = await listen("engine-changed", () => refreshStore());
     const unlistenLayouts = await listen("layouts-reloaded", () => refreshStore());
     onCleanup(() => {
       unlistenConfig();
       unlistenLayouts();
     });
+    await initStore();
 
     try {
       const session = await getSession();

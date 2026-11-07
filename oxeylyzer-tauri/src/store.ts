@@ -3,7 +3,8 @@ import { createStore } from "solid-js/store";
 
 export type HeatScheme = "original" | "playground" | "v2";
 export const [heatScheme, setHeatScheme] = createSignal<HeatScheme>("playground");
-import { listLayouts, listLanguages, currentLanguage, getCharFrequencies } from "./api";
+import { getStoreSnapshot } from "./api";
+import { latestRequest } from "./latestRequest";
 import type { Layout } from "./types";
 
 type AppStore = {
@@ -48,23 +49,6 @@ export async function refreshStore(): Promise<void> {
   }
 }
 
-async function fetchStore(): Promise<void> {
-  const [layouts, languages, lang, freqList] = await Promise.all([
-    listLayouts(),
-    listLanguages(),
-    currentLanguage(),
-    getCharFrequencies(),
-  ]);
-
-  const charFrequencies: Record<string, number> = {};
-  for (const { char, percent } of freqList) {
-    charFrequencies[char] = percent;
-  }
-
-  setAppStore({
-    layouts,
-    languages,
-    currentLanguage: lang,
-    charFrequencies,
-  });
-}
+const fetchStore = latestRequest(getStoreSnapshot, (snapshot) =>
+  setAppStore({ ...snapshot, error: null }),
+);
