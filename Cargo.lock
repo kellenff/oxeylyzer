@@ -3127,6 +3127,7 @@ dependencies = [
  "glob",
  "notify",
  "oxeylyzer-core",
+ "oxeylyzer-repl",
  "oxeylyzer-resources",
  "serde",
  "serde_json",

@@ -92,7 +92,7 @@ Implementations in `oxeylyzer-core/src/generate/`, all structs holding `&Oxeylyz
 
 The reusable greedy loop is `Oxeylyzer::climb(&mut layout, &mut cache, &swaps, max_swaps)` (`max_swaps == 0` means unlimited; cache must come from `initialize_cache`). Shared test fixtures: `generate/test_util.rs` (`analyzer()`, `qwerty()`, `score()`, `assert_valid()`).
 
-Dead experiments (NOT declared as modules, do not compile): `generate/iterative.rs`, `desshaw.rs`, `michaelll.rs`. `obsolete.rs` holds the non-cached `best_swap`/`score_swap` used by tests to validate the cached path.
+`generate/obsolete.rs` holds the non-cached `best_swap`/`score_swap` used by tests to validate the cached path.
 
 ## Configuration
 

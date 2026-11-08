@@ -888,35 +888,15 @@ async fn load_corpus(
     raw: bool,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
-    use oxeylyzer_core::corpus_cleaner::CorpusCleaner;
-
     let source_dir = state.dirs.text_dir().join(&language);
     let out_dir = state.dirs.language_data_dir();
-    if !source_dir.is_dir() {
-        return Err(format!(
-            "Source directory '{}' not found.",
-            source_dir.display()
-        ));
-    }
+    let config_glob = state.config.lock().unwrap().corpus_configs.clone();
+    let config_glob = state.active_data_root.lock().unwrap().join(config_glob);
 
     // Corpus processing is CPU-heavy and can take a long time for large texts —
     // run it on a blocking thread so the UI stays responsive.
     tauri::async_runtime::spawn_blocking(move || {
-        let paths: Vec<PathBuf> = std::fs::read_dir(&source_dir)
-            .map_err(|e| e.to_string())?
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_file())
-            .collect();
-
-        let cleaner = if raw {
-            CorpusCleaner::raw()
-        } else {
-            CorpusCleaner::default()
-        };
-
-        let data = Data::from_paths(&paths, &language, &cleaner)
-            .map_err(|e| format!("Failed to process corpus: {e}"))?;
+        let data = import_corpus_data(&language, raw, &source_dir, &config_glob)?;
 
         data.save(&out_dir)
             .map_err(|e| format!("Failed to save corpus: {e}"))?;
@@ -927,6 +907,52 @@ async fn load_corpus(
     })
     .await
     .map_err(|e| format!("Corpus task failed: {e}"))?
+}
+
+fn import_corpus_data(
+    language: &str,
+    raw: bool,
+    source_dir: &Path,
+    config_glob: &Path,
+) -> Result<Data, String> {
+    use oxeylyzer_core::corpus_cleaner::CorpusCleaner;
+    use oxeylyzer_repl::corpus_transposition::CorpusConfig;
+
+    let (cleaner, mut sources) = if raw {
+        (CorpusCleaner::raw(), Vec::new())
+    } else {
+        let config_path = glob::glob(&config_glob.to_string_lossy())
+            .map_err(|e| format!("Invalid corpus rules pattern: {e}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to find corpus rules: {e}"))?
+            .into_iter()
+            .find(|path| path.file_stem().is_some_and(|name| name == language))
+            .ok_or_else(|| {
+                format!("No corpus cleaning rules found for '{language}'. Enable raw mode to import without rules.")
+            })?;
+        let config = CorpusConfig::load(&config_path)
+            .map_err(|e| format!("Failed to load corpus rules: {e}"))?;
+        let sources = config.sources().to_vec();
+        (CorpusCleaner::from(config), sources)
+    };
+    if sources.is_empty() {
+        if !source_dir.is_dir() {
+            return Err(format!(
+                "Source directory '{}' not found.",
+                source_dir.display()
+            ));
+        }
+        sources.push(source_dir.to_path_buf());
+    }
+    Data::from_paths(&sources, language, &cleaner)
+        .map_err(|e| format!("Failed to process corpus: {e}"))
+}
+
+fn generation_pool(max_cores: usize) -> Result<oxeylyzer_core::rayon::ThreadPool, String> {
+    oxeylyzer_core::rayon::ThreadPoolBuilder::new()
+        .num_threads(max_cores)
+        .build()
+        .map_err(|e| format!("Failed to create generation worker pool: {e}"))
 }
 
 /// Generates one batch of layouts with the selected search algorithm.
@@ -1014,87 +1040,94 @@ async fn start_generate(
 
     let pin_pos = pin_positions(&fast_base, &engine, &pins);
     let app = app_handle.clone();
+    let pool = match generation_pool(state.config.lock().unwrap().max_cores) {
+        Ok(pool) => pool,
+        Err(error) => {
+            generating.store(false, Ordering::SeqCst);
+            return Err(error);
+        }
+    };
 
     std::thread::spawn(move || {
-        // Generate in parallel batches, checking the cancel flag between
-        // batches — this is what makes cancellation actually stop the work
-        // instead of merely discarding its results.
-        let batch = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4);
-        let mut results: Vec<FastLayout> = Vec::with_capacity(count);
-        let mut last_emit = std::time::Instant::now();
+        pool.install(|| {
+            // Generate in parallel batches, checking the cancel flag between
+            // batches — this is what makes cancellation actually stop the work
+            // instead of merely discarding its results.
+            let batch = pool.current_num_threads();
+            let mut results: Vec<FastLayout> = Vec::with_capacity(count);
+            let mut last_emit = std::time::Instant::now();
 
-        while results.len() < count && !cancel.load(Ordering::Relaxed) {
-            let n = batch.min(count - results.len());
-            results.extend(generate_batch(&engine, &algorithm, n, &fast_base, &pin_pos));
+            while results.len() < count && !cancel.load(Ordering::Relaxed) {
+                let n = batch.min(count - results.len());
+                results.extend(generate_batch(&engine, &algorithm, n, &fast_base, &pin_pos));
 
-            if last_emit.elapsed() >= std::time::Duration::from_millis(200) {
-                last_emit = std::time::Instant::now();
-                let _ = app.emit(
-                    "generate-progress",
-                    serde_json::json!({ "done": results.len(), "total": count }),
-                );
-            }
-        }
-
-        let cancelled = cancel.load(Ordering::Relaxed);
-        {
-            let state = app.state::<AppState>();
-            let _transition = state.transition.lock().unwrap();
-            if !Arc::ptr_eq(&engine, &state.engine.lock().unwrap()) {
-                results.clear();
-            }
-        }
-
-        // Pre-compute scores once per layout, then sort by cached value.
-        // Avoids calling engine.score() O(N log N) times inside the comparator.
-        let char_total = engine.data.char_total;
-        let mut scored: Vec<(i64, FastLayout)> = results
-            .into_iter()
-            .map(|fl| (engine.score(&fl), fl))
-            .collect();
-        scored.sort_unstable_by(|(s1, _), (s2, _)| s2.cmp(s1));
-
-        // Build DTOs for the top 50 in parallel — get_layout_stats is expensive
-        // but read-only, so rayon can safely run it across threads.
-        let top = &scored[..50.min(scored.len())];
-        let layout_dtos: Vec<LayoutDto> = top
-            .par_iter()
-            .enumerate()
-            .map(|(i, (_, fl))| {
-                let stats = engine.get_layout_stats(fl);
-                let stats_dto = stats_to_dto(&stats, char_total, finger_usage_pct(&engine, fl));
-                LayoutDto {
-                    name: fl.name.clone().unwrap_or_else(|| format!("gen-{}", i + 1)),
-                    keys: fl.layout_str(),
-                    board: "generated".to_string(),
-                    fingering_name: fl.metadata.fingering_name.as_ref().map(|n| n.to_string()),
-                    stats: stats_dto,
-                    keyboard: fl
-                        .keyboard
-                        .iter()
-                        .map(|k| [k.x(), k.y(), k.width(), k.height()])
-                        .collect(),
-                    shape: fl.shape.inner().to_vec(),
+                if last_emit.elapsed() >= std::time::Duration::from_millis(200) {
+                    last_emit = std::time::Instant::now();
+                    let _ = app.emit(
+                        "generate-progress",
+                        serde_json::json!({ "done": results.len(), "total": count }),
+                    );
                 }
-            })
-            .collect();
+            }
 
-        // Store all results (sorted) for save_generated. Partial results from a
-        // cancelled run are kept on purpose — they're still valid layouts.
-        let state = app.state::<AppState>();
-        finish_generation(
-            &state,
-            &engine,
-            revision,
-            scored.into_iter().map(|(_, fl)| fl).collect(),
-            layout_dtos,
-            cancelled,
-            |payload| {
-                let _ = app.emit("generate-done", payload);
-            },
-        );
+            let cancelled = cancel.load(Ordering::Relaxed);
+            {
+                let state = app.state::<AppState>();
+                let _transition = state.transition.lock().unwrap();
+                if !Arc::ptr_eq(&engine, &state.engine.lock().unwrap()) {
+                    results.clear();
+                }
+            }
+
+            // Pre-compute scores once per layout, then sort by cached value.
+            // Avoids calling engine.score() O(N log N) times inside the comparator.
+            let char_total = engine.data.char_total;
+            let mut scored: Vec<(i64, FastLayout)> = results
+                .into_iter()
+                .map(|fl| (engine.score(&fl), fl))
+                .collect();
+            scored.sort_unstable_by(|(s1, _), (s2, _)| s2.cmp(s1));
+
+            // Build DTOs for the top 50 in parallel — get_layout_stats is expensive
+            // but read-only, so rayon can safely run it across threads.
+            let top = &scored[..50.min(scored.len())];
+            let layout_dtos: Vec<LayoutDto> = top
+                .par_iter()
+                .enumerate()
+                .map(|(i, (_, fl))| {
+                    let stats = engine.get_layout_stats(fl);
+                    let stats_dto = stats_to_dto(&stats, char_total, finger_usage_pct(&engine, fl));
+                    LayoutDto {
+                        name: fl.name.clone().unwrap_or_else(|| format!("gen-{}", i + 1)),
+                        keys: fl.layout_str(),
+                        board: "generated".to_string(),
+                        fingering_name: fl.metadata.fingering_name.as_ref().map(|n| n.to_string()),
+                        stats: stats_dto,
+                        keyboard: fl
+                            .keyboard
+                            .iter()
+                            .map(|k| [k.x(), k.y(), k.width(), k.height()])
+                            .collect(),
+                        shape: fl.shape.inner().to_vec(),
+                    }
+                })
+                .collect();
+
+            // Store all results (sorted) for save_generated. Partial results from a
+            // cancelled run are kept on purpose — they're still valid layouts.
+            let state = app.state::<AppState>();
+            finish_generation(
+                &state,
+                &engine,
+                revision,
+                scored.into_iter().map(|(_, fl)| fl).collect(),
+                layout_dtos,
+                cancelled,
+                |payload| {
+                    let _ = app.emit("generate-done", payload);
+                },
+            );
+        });
     });
 
     Ok(())
@@ -2342,6 +2375,81 @@ mod filename_boundary_tests {
             notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Any))
                 .add_path(path),
         )
+    }
+
+    #[test]
+    fn normal_corpus_import_applies_inherited_rules_and_configured_sources() {
+        let root = TestDir::new();
+        let source = root.0.join("text/sample");
+        let rules = root.0.join("rules");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir(&rules).unwrap();
+        std::fs::write(source.join("sample.txt"), "Aé Aé aae").unwrap();
+        std::fs::write(rules.join("default.toml"), "letters_to_lowercase = 'ae'").unwrap();
+        std::fs::write(
+            rules.join("sample.toml"),
+            "inherits = ['default.toml']\nsources = ['../text/sample']\n[one_to_one]\nfrom = 'é'\nto = 'e'",
+        ).unwrap();
+        let pattern = rules.join("*.toml");
+        // Normal import uses configured sources, even without the fallback directory.
+        let normal = import_corpus_data("sample", false, &root.0.join("absent"), &pattern).unwrap();
+        let raw = import_corpus_data("sample", true, &source, &pattern).unwrap();
+        assert!(normal.get_char('a').is_some());
+        assert!(normal.get_char('e').is_some());
+        assert!(normal.get_char('A').is_none());
+        assert!(normal.get_char('é').is_none());
+        assert!(raw.get_char('A').is_some());
+        assert!(raw.get_char('é').is_some());
+        assert_ne!(normal.chars, raw.chars);
+    }
+
+    #[test]
+    fn normal_corpus_import_requires_valid_rules_but_raw_does_not() {
+        let root = TestDir::new();
+        std::fs::write(root.0.join("sample.txt"), "Aa Aa Aa").unwrap();
+        let pattern = root.0.join("*.toml");
+        assert!(
+            import_corpus_data("sample", false, &root.0, &pattern)
+                .unwrap_err()
+                .contains("No corpus cleaning rules")
+        );
+        assert!(import_corpus_data("sample", true, &root.0, &pattern).is_ok());
+        std::fs::write(root.0.join("sample.toml"), "invalid = [").unwrap();
+        assert!(
+            import_corpus_data("sample", false, &root.0, &pattern)
+                .unwrap_err()
+                .contains("Failed to load corpus rules")
+        );
+        std::fs::write(root.0.join("sample.toml"), "letters_to_lowercase = 'a'").unwrap();
+        let normal = import_corpus_data("sample", false, &root.0, &pattern).unwrap();
+        assert!(normal.get_char('A').is_none());
+        assert!(normal.get_char('a').is_some());
+    }
+
+    #[test]
+    fn generation_uses_the_configured_pool_for_each_run() {
+        use oxeylyzer_core::rayon::prelude::*;
+        let mut config = Config::with_defaults();
+        for limit in [1, 2, 1] {
+            config.max_cores = limit;
+            let pool = generation_pool(config.max_cores).unwrap();
+            assert_eq!(pool.current_num_threads(), limit);
+            let threads = pool.install(|| {
+                (0..32)
+                    .into_par_iter()
+                    .map(|_| oxeylyzer_core::rayon::current_num_threads())
+                    .collect::<Vec<_>>()
+            });
+            assert!(threads.iter().all(|&count| count == limit));
+            let engine = Oxeylyzer::new(Data::from("abcd abcd abcd"), config.clone());
+            let layout = serde_json::from_str::<Layout>(include_str!(
+                "../../../oxeylyzer-core/static/layouts/gust.dof"
+            ))
+            .unwrap();
+            let base = engine.fast_layout(&layout, &[]);
+            let results = pool.install(|| generate_batch(&engine, "hill", 2, &base, &[]));
+            assert_eq!(results.len(), 2);
+        }
     }
 
     #[test]

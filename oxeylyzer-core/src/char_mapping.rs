@@ -36,6 +36,10 @@ impl CharMapping {
 
     /// Adds a character to the mapping if it's not already present.
     ///
+    /// # Panics
+    /// Panics if inserting a new character would exceed 256 distinct characters,
+    /// including the three default special characters, supported by byte IDs.
+    ///
     /// # Examples:
     /// ```
     /// use oxeylyzer_core::char_mapping::CharMapping;
@@ -46,11 +50,14 @@ impl CharMapping {
     /// ```
     pub fn push(&mut self, c: char) {
         if !self.0.contains_key(&c) {
-            self.0.insert(c, self.len() as u8);
+            let id = u8::try_from(self.len())
+                .expect("character mapping exceeds the 256-character byte-ID capacity");
+            self.0.insert(c, id);
         }
     }
 
     /// Removes a character from the mapping and returns its previous value.
+    /// The last character takes its place and receives the removed character's ID.
     ///
     /// # Examples:
     /// ```
@@ -62,7 +69,11 @@ impl CharMapping {
     /// assert_eq!(mapping.get_u('a'), 0);
     /// ```
     pub fn remove(&mut self, c: char) -> Option<u8> {
-        self.0.swap_remove(&c)
+        let (index, _, previous) = self.0.swap_remove_full(&c)?;
+        if let Some((_, id)) = self.0.get_index_mut(index) {
+            *id = index as u8;
+        }
+        Some(previous)
     }
 
     /// Removes the last added character from the mapping.
@@ -263,6 +274,32 @@ impl CharMapping {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removal_and_insertion_preserve_round_trips() {
+        let mut mapping = CharMapping::from("abc");
+        assert_eq!(mapping.remove('a'), Some(3));
+        for c in ['b', 'c', REPLACEMENT_CHAR, SHIFT_CHAR, SPACE_CHAR] {
+            assert_eq!(mapping.get_c(mapping.get_u(c)), c);
+        }
+        mapping.push('d');
+        assert_ne!(mapping.get_u('c'), mapping.get_u('d'));
+        assert_eq!(mapping.get_c(mapping.get_u('d')), 'd');
+        assert_eq!(mapping.remove('b'), Some(4));
+        assert_eq!(mapping.get_c(mapping.get_u('d')), 'd');
+        assert_eq!(mapping.remove('z'), None);
+        assert_eq!(mapping.pop(), Some(('d', 4)));
+        assert_eq!(mapping.get_c(mapping.get_u('c')), 'c');
+    }
+
+    #[test]
+    #[should_panic(expected = "character mapping exceeds the 256-character byte-ID capacity")]
+    fn byte_id_capacity_is_explicit() {
+        let mut mapping = CharMapping::new();
+        for c in (0x400..0x500).map(|c| char::from_u32(c).unwrap()) {
+            mapping.push(c);
+        }
+    }
 
     #[test]
     fn to_from() {

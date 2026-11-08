@@ -11,6 +11,7 @@ import ConfigView from "./views/ConfigView";
 import { initStore, refreshStore, appStore, heatScheme, setHeatScheme } from "./store";
 import type { HeatScheme } from "./store";
 import { getSession, setSession } from "./api";
+import { generationStore } from "./generation";
 
 type View = "layouts" | "analyze" | "compare" | "generate" | "language" | "edit" | "config";
 
@@ -30,8 +31,10 @@ function App() {
   const [editTarget, setEditTarget] = createSignal<string | undefined>(undefined);
 
   let sessionRestored = false;
+  onCleanup(() => generationStore.dispose());
 
   onMount(async () => {
+    void generationStore.init().catch(console.error);
     // Refresh (without unmounting views) when files change on disk —
     // engine-changed means the engine was rebuilt, layouts-reloaded means
     // only layout files changed (e.g. the app's own saves).

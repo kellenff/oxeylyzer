@@ -244,7 +244,7 @@ where {
             language: data.name().to_string(),
             per_char_trigrams: Self::per_char_trigrams(
                 data.gen_trigrams(),
-                data.len() as u8,
+                data.len(),
                 config.trigram_precision(),
             ),
             mapping: data.mapping.clone(),
@@ -294,7 +294,7 @@ where {
             .map(Into::into)
             .collect();
 
-        let mut char_to_finger = Box::new([None; 60]);
+        let mut char_to_finger = vec![None; mapping.len()].into_boxed_slice();
         matrix
             .iter()
             .enumerate()
@@ -551,7 +551,7 @@ where {
 
     fn per_char_trigrams(
         trigrams: &[([u8; 3], i64)],
-        highest: u8,
+        highest: usize,
         trigram_precision: usize,
     ) -> HashMap<[u8; 2], TrigramData> {
         let mut n_trigrams = trigrams.to_vec();
@@ -560,6 +560,7 @@ where {
         (0..highest)
             .cartesian_product(0..highest)
             .map(|(c1, c2)| {
+                let (c1, c2) = (c1 as u8, c2 as u8);
                 let v1 = n_trigrams
                     .iter()
                     .map(|(t, f)| (*t, *f))
@@ -1274,15 +1275,13 @@ mod tests {
 
         if let (Some(best_swap_normal), best_score_normal) =
             GEN.best_swap(&mut qwerty, None, &QWERTY.possible_swaps)
-        {
-            if let (Some(best_swap_cached), best_score_cached) =
+            && let (Some(best_swap_cached), best_score_cached) =
                 GEN.best_swap_cached(&mut qwerty, &cache, &QWERTY.possible_swaps, None)
-            {
-                if best_score_normal == best_score_cached {
-                    assert_eq!(best_swap_normal, best_swap_cached);
-                } else {
-                    println!("scores not the same")
-                }
+        {
+            if best_score_normal == best_score_cached {
+                assert_eq!(best_swap_normal, best_swap_cached);
+            } else {
+                println!("scores not the same")
             }
         }
     }

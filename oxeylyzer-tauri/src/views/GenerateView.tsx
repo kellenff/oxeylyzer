@@ -1,15 +1,9 @@
-import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import KeyboardDisplay from "../components/KeyboardDisplay";
 import LayoutSearch from "../components/LayoutSearch";
 import Dropdown from "../components/Dropdown";
 import { appStore } from "../store";
-import { startGenerate, saveGenerated, cancelGenerate } from "../api";
-import type { Layout } from "../types";
-import { listen } from "@tauri-apps/api/event";
-import { generationResultsAfterEvent } from "../generationResults";
-import type { GenerationEvent, GenerationResults } from "../generationResults";
-
-type SaveState = { name: string; saved: boolean };
+import { generationStore } from "../generation";
 
 const ALGORITHMS: { id: string; label: string; hint: string }[] = [
   { id: "hill", label: "hill climb", hint: "fastest — many layouts per second" },
@@ -41,112 +35,32 @@ export default function GenerateView() {
       return next;
     });
   }
-  const [running, setRunning] = createSignal(false);
-  const [cancelling, setCancelling] = createSignal(false);
-  const [generationResults, setGenerationResults] = createSignal<GenerationResults>({
-    revision: 0,
-    results: [],
-    cancelled: false,
-    reason: null,
-  });
-  const results = () => generationResults().results;
-  const wasCancelled = () => generationResults().cancelled;
-  const stopReason = () => generationResults().reason;
-  const [progress, setProgress] = createSignal<{ done: number; total: number } | null>(null);
-  const [saveStates, setSaveStates] = createSignal<SaveState[]>([]);
-  const [error, setError] = createSignal("");
-
-  let unlisteners: (() => void)[] = [];
-
-  const clearListeners = () => {
-    unlisteners.forEach((u) => u());
-    unlisteners = [];
-  };
-
-  const engineUnlisten = listen<number>("engine-changed", (e) => {
-    applyGenerationEvent({ type: "engine-changed", revision: e.payload });
-  });
-  onCleanup(() => {
-    clearListeners();
-    void engineUnlisten.then((unlisten) => unlisten());
-  });
-
-  function initSaveStates(layouts: Layout[]) {
-    setSaveStates(layouts.map((l) => ({ name: l.name, saved: false })));
-  }
-
-  function applyGenerationEvent(event: GenerationEvent) {
-    const current = generationResults();
-    const next = generationResultsAfterEvent(current, event);
-    if (next !== current) {
-      setGenerationResults(next);
-      initSaveStates(next.results);
-    }
-  }
+  const running = () => generationStore.state.running;
+  const cancelling = () => generationStore.state.cancelling;
+  const results = () => generationStore.state.generationResults.results;
+  const wasCancelled = () => generationStore.state.generationResults.cancelled;
+  const stopReason = () => generationStore.state.generationResults.reason;
+  const progress = () => generationStore.state.progress;
+  const saveStates = () => generationStore.state.saveStates;
+  const error = () => generationStore.state.error;
 
   async function handleGenerate() {
-    clearListeners();
-
-    setRunning(true);
-    setCancelling(false);
-    setGenerationResults((previous) => ({
-      ...previous,
-      results: [],
-      cancelled: false,
-      reason: null,
-    }));
-    setSaveStates([]);
-    setProgress({ done: 0, total: count() });
-    setError("");
-
-    await engineUnlisten;
-    const progressUnlisten = await listen<{ done: number; total: number }>(
-      "generate-progress",
-      (e) => setProgress(e.payload),
-    );
-
-    // Ordinary cancellation keeps partial results; engine invalidation discards them.
-    const doneUnlisten = await listen<GenerationResults>("generate-done", (e) => {
-      applyGenerationEvent({ type: "completed", payload: e.payload });
-      setVisibleCount(10);
-      setRunning(false);
-      setCancelling(false);
-      setProgress(null);
-      clearListeners();
-    });
-
-    unlisteners = [progressUnlisten, doneUnlisten];
-
-    try {
-      await startGenerate(baseName(), count(), pins(), algorithm());
-    } catch (e) {
-      setError(String(e));
-      setRunning(false);
-      setCancelling(false);
-      setProgress(null);
-      clearListeners();
-    }
+    setVisibleCount(10);
+    await generationStore.start(baseName(), count(), pins(), algorithm());
   }
 
   // The run keeps going until the current batch finishes; the UI stays in a
   // "cancelling" state until the backend's done event arrives.
   async function handleCancel() {
-    setCancelling(true);
-    await cancelGenerate().catch(console.error);
+    await generationStore.cancel();
   }
 
   function updateSaveName(i: number, name: string) {
-    setSaveStates((prev) => prev.map((s, idx) => (idx === i ? { ...s, name } : s)));
+    generationStore.updateSaveName(i, name);
   }
 
   async function handleSave(i: number) {
-    const state = saveStates()[i];
-    try {
-      await saveGenerated(i, state.name || undefined);
-      setSaveStates((prev) => prev.map((s, idx) => (idx === i ? { ...s, saved: true } : s)));
-    } catch (e) {
-      setError(String(e));
-    }
+    await generationStore.save(i);
   }
 
   return (

@@ -47,10 +47,12 @@ mod scoring_regressions {
         data.skipgrams.insert(['a', 'b'], 20.0);
         data.skipgrams2.insert(['a', 'b'], 30.0);
         data.skipgrams3.insert(['a', 'b'], 40.0);
-        let mut weights = Weights::default();
-        weights.sfbs = 0.0;
-        weights.sfs = -1.0;
-        weights.stretches = -0.3;
+        let mut weights = Weights {
+            sfbs: 0.0,
+            sfs: -1.0,
+            stretches: -0.3,
+            ..Weights::default()
+        };
         let analyzer = AnalyzerData::new(data.clone(), &weights);
         for pair in [['a', 'b'], ['b', 'a']] {
             assert_eq!(analyzer.get_same_finger_weighted_bigram(pair), -90);

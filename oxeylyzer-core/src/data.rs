@@ -423,12 +423,17 @@ impl IntermediateData {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn corpus_chunk_count(file_len: usize, cpu_count: usize) -> usize {
+    (file_len / CHUNK_SIZE).clamp(1, cpu_count.saturating_sub(1).max(1))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl IntermediateData {
     fn from_file(file: File, name: &str, cleaner: &CorpusCleaner) -> Result<Self> {
         let chunker = FileChunker::new(&file).map_err(|_| OxeylyzerError::ChunkerInitError)?;
 
         let file_len = file.metadata().str_context(name)?.len() as usize;
-        let chunk_count = (file_len / CHUNK_SIZE).clamp(1, num_cpus::get() - 1);
+        let chunk_count = corpus_chunk_count(file_len, num_cpus::get());
 
         let chunks = chunker
             .chunks(chunk_count, Some(' '))
@@ -448,6 +453,39 @@ impl IntermediateData {
         intermediate.name = name.into();
 
         Ok(intermediate)
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod chunk_tests {
+    use super::*;
+
+    #[test]
+    fn corpus_import_uses_at_least_one_chunk() {
+        for cpus in [0, 1, 2] {
+            for bytes in [0, 1, CHUNK_SIZE, 10 * CHUNK_SIZE] {
+                assert_eq!(corpus_chunk_count(bytes, cpus), 1);
+            }
+        }
+        assert_eq!(corpus_chunk_count(10 * CHUNK_SIZE, 4), 3);
+        assert_eq!(corpus_chunk_count(2 * CHUNK_SIZE, 4), 2);
+    }
+
+    #[test]
+    fn file_import_matches_raw_text_counts() {
+        let path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/static/text/test/test.txt"
+        ));
+        let cleaner = CorpusCleaner::raw();
+        let text = std::fs::read_to_string(path).unwrap();
+        let expected: Data = text.chars().clean_corpus(&cleaner).flatten().collect();
+        let actual = Data::from_file(File::open(path).unwrap(), "test", &cleaner).unwrap();
+        assert!(actual.char_total > 0);
+        assert_eq!(actual.char_total, expected.char_total);
+        assert_eq!(actual.chars, expected.chars);
+        assert_eq!(actual.bigrams, expected.bigrams);
+        assert_eq!(actual.trigrams, expected.trigrams);
     }
 }
 
