@@ -222,7 +222,7 @@ impl FastLayout {
         let mut res = self.clone();
 
         res.name = None;
-        res.char_to_finger = Box::new([None; 60]);
+        res.char_to_finger.fill(None);
 
         shuffle_pins(&mut res.keys, pins);
 
@@ -1076,6 +1076,39 @@ mod tests {
     });
 
     #[test]
+    fn multilingual_character_ids_survive_conversion_randomization_and_swaps() {
+        for count in [80, 253] {
+            let chars: Vec<char> = (0x400..0x400 + count)
+                .map(|c| char::from_u32(c).unwrap())
+                .collect();
+            let data = chars.iter().copied().collect::<Data>();
+            let engine = Oxeylyzer::new(data, Config::with_defaults());
+            assert_eq!(engine.mapping.len(), count as usize + 3);
+            let mut layout: Layout = QWERTY.clone().into();
+            layout.keys = (engine.mapping.len() - 30..engine.mapping.len())
+                .map(|id| engine.mapping.get_c(id as u8))
+                .collect();
+            let fast = engine.fast_layout(&layout, &[]);
+            assert!(fast.keys.iter().any(|&id| id >= 60));
+            let mut random = fast.random_with_pins(&[0]);
+            assert_eq!(random.keys[0], fast.keys[0]);
+            assert_eq!(random.char_to_finger.len(), engine.mapping.len());
+            random.swap(1, 20).unwrap();
+            for (i, &id) in random.keys.iter().enumerate() {
+                assert_eq!(random.char_to_finger[id as usize], Some(random.fingers[i]));
+            }
+            assert_eq!(
+                random.layout_str().chars().collect::<HashSet<_>>(),
+                layout.keys.iter().copied().collect()
+            );
+            assert_eq!(
+                engine.score(&random),
+                engine.initialize_cache(&random).total_score()
+            );
+        }
+    }
+
+    #[test]
     fn test_key_dist() {
         let k1 = "1 0 0 0"
             .parse::<PhysicalKey>()
@@ -1276,9 +1309,9 @@ mod tests {
     fn char() {
         let qwerty = QWERTY.clone();
 
-        assert_eq!(qwerty.char(4 + (1 * 10)), Some(GEN.mapping.get_u('g')));
+        assert_eq!(qwerty.char(4 + 10), Some(GEN.mapping.get_u('g')));
         assert_eq!(qwerty.char(9 + (2 * 10)), Some(GEN.mapping.get_u('/')));
-        assert_eq!(qwerty.char(8 + (1 * 10)), Some(GEN.mapping.get_u('l')));
+        assert_eq!(qwerty.char(8 + 10), Some(GEN.mapping.get_u('l')));
     }
 
     #[test]
